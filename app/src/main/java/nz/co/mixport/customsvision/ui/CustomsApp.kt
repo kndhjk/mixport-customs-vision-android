@@ -6,16 +6,17 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,7 +25,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -47,24 +47,26 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import nz.co.mixport.customsvision.BuildConfig
 import nz.co.mixport.customsvision.camera.InspectionCameraController
+import nz.co.mixport.customsvision.camera.LiveDetectionFrame
+import nz.co.mixport.customsvision.camera.LiveRecognition
 import nz.co.mixport.customsvision.data.CargoSummaryRecord
 import nz.co.mixport.customsvision.data.InspectionSessionRecord
 import nz.co.mixport.customsvision.data.PalletDetail
@@ -73,6 +75,12 @@ import nz.co.mixport.customsvision.domain.WorkflowEvent
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlin.math.max
+import kotlin.math.roundToInt
+
+private val TrackingGreen = Color(0xFF39D353)
+private val CountedGreen = Color(0xFF238636)
+private val OverlayScrim = Color(0x22000000)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -111,7 +119,7 @@ fun CustomsApp(viewModel: AppViewModel) {
                     Column {
                         Text("Mixport Customs Pilot")
                         Text(
-                            text = "Android MVP for video capture, pallet counting, and audit logs",
+                            text = "Live tracking overlay, video capture, and pallet event logging",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -149,6 +157,8 @@ fun CustomsApp(viewModel: AppViewModel) {
                 onStartSession = viewModel::startSession,
                 onCloseSession = viewModel::closeSession,
                 onWorkflowEvent = viewModel::submitWorkflowEvent,
+                onCountVisibleDetections = viewModel::countVisibleDetections,
+                onDetectionFrame = viewModel::onDetections,
                 onHeartbeat = viewModel::onFrameHeartbeat,
                 onRecordingStarted = viewModel::onRecordingStarted,
                 onRecordingSaved = viewModel::onRecordingSaved,
@@ -176,6 +186,8 @@ private fun LiveScreen(
     onStartSession: () -> Unit,
     onCloseSession: () -> Unit,
     onWorkflowEvent: (WorkflowEvent) -> Unit,
+    onCountVisibleDetections: () -> Unit,
+    onDetectionFrame: (LiveDetectionFrame) -> Unit,
     onHeartbeat: (Long) -> Unit,
     onRecordingStarted: () -> Unit,
     onRecordingSaved: (String) -> Unit,
@@ -214,13 +226,20 @@ private fun LiveScreen(
                 uiState = uiState,
                 cameraController = cameraController,
                 onHeartbeat = onHeartbeat,
+                onDetectionFrame = onDetectionFrame,
                 onRecordingStarted = onRecordingStarted,
                 onRecordingSaved = onRecordingSaved,
                 onRecordingError = onRecordingError,
             )
         }
         item {
-            DemoControlsCard(
+            LiveDetectionsCard(
+                uiState = uiState,
+                onCountVisibleDetections = onCountVisibleDetections,
+            )
+        }
+        item {
+            ManualControlsCard(
                 enabled = uiState.activeSession != null,
                 onWorkflowEvent = onWorkflowEvent,
             )
@@ -303,7 +322,7 @@ private fun SessionSetupCard(
             }
             uiState.activeSession?.let { session ->
                 Text(
-                    text = "Active session: ${session.containerCode} • ${session.operatorName}",
+                    text = "Active session: ${session.containerCode} | ${session.operatorName}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -337,13 +356,19 @@ private fun StatusCard(uiState: LiveInspectionUiState) {
                         )
                     },
                 )
+                AssistChip(
+                    onClick = {},
+                    label = { Text("Live tracks: ${uiState.liveDetections.size}") },
+                )
             }
             val heartbeatText = uiState.lastFrameHeartbeatAt?.let {
-                "Video heartbeat: ${formatTimestamp(it)}"
-            } ?: "Video heartbeat: waiting"
+                "Vision heartbeat: ${formatTimestamp(it)}"
+            } ?: "Vision heartbeat: waiting"
+            Text(text = heartbeatText, style = MaterialTheme.typography.bodyMedium)
             Text(
-                text = heartbeatText,
-                style = MaterialTheme.typography.bodyMedium,
+                text = "Green boxes come from live ML Kit object tracking. The pallet wrap step is still manual.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             uiState.recordingUri?.let {
                 Text(
@@ -363,6 +388,7 @@ private fun CameraCard(
     uiState: LiveInspectionUiState,
     cameraController: InspectionCameraController,
     onHeartbeat: (Long) -> Unit,
+    onDetectionFrame: (LiveDetectionFrame) -> Unit,
     onRecordingStarted: () -> Unit,
     onRecordingSaved: (String) -> Unit,
     onRecordingError: (String) -> Unit,
@@ -378,35 +404,60 @@ private fun CameraCard(
             Text("Live Camera", style = MaterialTheme.typography.titleMedium)
             if (!uiState.cameraPermissionGranted) {
                 Text(
-                    text = "Camera permission is required to preview and record the unloading process.",
+                    text = "Camera permission is required to preview and track cargo.",
                     color = MaterialTheme.colorScheme.error,
                 )
             } else {
-                AndroidView(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(260.dp),
-                    factory = { context ->
-                        PreviewView(context).apply {
-                            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                            scaleType = PreviewView.ScaleType.FILL_CENTER
+                        .height(260.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color.Black),
+                ) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { context ->
+                            PreviewView(context).apply {
+                                implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                                scaleType = PreviewView.ScaleType.FILL_CENTER
+                                cameraController.bind(
+                                    previewView = this,
+                                    lifecycleOwner = lifecycleOwner,
+                                    onFrameHeartbeat = onHeartbeat,
+                                    onDetections = onDetectionFrame,
+                                    onError = onRecordingError,
+                                )
+                            }
+                        },
+                        update = { previewView ->
                             cameraController.bind(
-                                previewView = this,
+                                previewView = previewView,
                                 lifecycleOwner = lifecycleOwner,
                                 onFrameHeartbeat = onHeartbeat,
+                                onDetections = onDetectionFrame,
                                 onError = onRecordingError,
                             )
+                        },
+                    )
+                    LiveDetectionOverlay(detections = uiState.liveDetections)
+                    if (uiState.liveDetections.isEmpty()) {
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(12.dp),
+                            color = OverlayScrim,
+                            shape = RoundedCornerShape(999.dp),
+                        ) {
+                            Text(
+                                text = "No tracked object yet",
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
                         }
-                    },
-                    update = { previewView ->
-                        cameraController.bind(
-                            previewView = previewView,
-                            lifecycleOwner = lifecycleOwner,
-                            onFrameHeartbeat = onHeartbeat,
-                            onError = onRecordingError,
-                        )
-                    },
-                )
+                    }
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(
@@ -442,16 +493,156 @@ private fun CameraCard(
                     onClick = {},
                     enabled = activeSession != null,
                 ) {
-                    Text(if (activeSession == null) "No session" else "Session live")
+                    Text(if (activeSession == null) "No session" else "Tracking live")
                 }
             }
         }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DemoControlsCard(
+private fun LiveDetectionOverlay(detections: List<LiveRecognition>) {
+    val density = LocalDensity.current
+    Box(modifier = Modifier.fillMaxSize()) {
+        detections.forEach { detection ->
+            val widthDp = with(density) { detection.width.toDp() }
+            val heightDp = with(density) { detection.height.toDp() }
+            val labelTop = max(
+                0f,
+                detection.top - with(density) { 32.dp.toPx() },
+            )
+
+            Box(
+                modifier = Modifier
+                    .offset {
+                        IntOffset(
+                            x = detection.left.roundToInt(),
+                            y = detection.top.roundToInt(),
+                        )
+                    }
+                    .size(width = widthDp, height = heightDp)
+                    .border(
+                        width = 2.dp,
+                        color = TrackingGreen,
+                        shape = RoundedCornerShape(12.dp),
+                    ),
+            )
+
+            Surface(
+                modifier = Modifier.offset {
+                    IntOffset(
+                        x = detection.left.roundToInt(),
+                        y = labelTop.roundToInt(),
+                    )
+                },
+                color = if (detection.isCounted) CountedGreen else OverlayScrim,
+                shape = RoundedCornerShape(999.dp),
+            ) {
+                Text(
+                    text = detection.overlayTitle,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveDetectionsCard(
+    uiState: LiveInspectionUiState,
+    onCountVisibleDetections: () -> Unit,
+) {
+    ElevatedCard {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Live Detections", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "This is now real on-device tracking. ML Kit provides the green boxes and track IDs. Use the count action to push currently visible cargo into the active pallet.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = onCountVisibleDetections,
+                    enabled = uiState.activeSession != null &&
+                        uiState.liveDetections.any { !it.isPalletCandidate && !it.isCounted },
+                ) {
+                    Text("Count Visible Cargo")
+                }
+                FilledTonalButton(
+                    onClick = {},
+                    enabled = uiState.liveDetections.isNotEmpty(),
+                ) {
+                    Text("${uiState.liveDetections.size} tracked")
+                }
+            }
+            if (uiState.liveDetections.isEmpty()) {
+                Text(
+                    text = "Aim the camera at a pallet or cargo. The first launch can take a moment while the detector model warms up.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                uiState.liveDetections.take(6).forEach { detection ->
+                    DetectionRow(detection = detection)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetectionRow(detection: LiveRecognition) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = detection.overlayTitle,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                AssistChip(
+                    onClick = {},
+                    label = {
+                        Text(
+                            when {
+                                detection.isPalletCandidate -> "Pallet"
+                                detection.isCounted -> "Counted"
+                                else -> "Visible"
+                            },
+                        )
+                    },
+                )
+            }
+            Text(
+                text = "Category: ${detection.category}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = "Confidence: ${formatConfidence(detection.confidence)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ManualControlsCard(
     enabled: Boolean,
     onWorkflowEvent: (WorkflowEvent) -> Unit,
 ) {
@@ -460,9 +651,9 @@ private fun DemoControlsCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Pilot Demo Controls", style = MaterialTheme.typography.titleMedium)
+            Text("Manual Controls", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "These buttons simulate the vision pipeline on an emulator. Replace them later with on-device object detection and OCR outputs.",
+                text = "Keep these controls as fallback while pallet wrap detection and custom cargo classification are still being trained.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -473,7 +664,7 @@ private fun DemoControlsCard(
                     },
                     enabled = enabled,
                 ) {
-                    Text("Detect Pallet")
+                    Text("Open Pallet")
                 }
                 OutlinedButton(
                     onClick = {
@@ -494,34 +685,17 @@ private fun DemoControlsCard(
                     onClick = {
                         onWorkflowEvent(
                             WorkflowEvent.CargoPlaced(
-                                itemLabel = "Wooden pallet carton",
-                                colorName = "Amber",
-                                markerText = "MPI",
+                                itemLabel = "Manual cargo",
+                                colorName = "Unclassified",
+                                markerText = "Manual",
                                 observedAt = System.currentTimeMillis(),
                             ),
                         )
                     },
                     enabled = enabled,
                 ) {
-                    Text("Add Amber MPI")
+                    Text("Add Manual Cargo")
                 }
-                FilledTonalButton(
-                    onClick = {
-                        onWorkflowEvent(
-                            WorkflowEvent.CargoPlaced(
-                                itemLabel = "Wrapped export box",
-                                colorName = "Blue",
-                                markerText = "NZCS",
-                                observedAt = System.currentTimeMillis(),
-                            ),
-                        )
-                    },
-                    enabled = enabled,
-                ) {
-                    Text("Add Blue NZCS")
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = {
                         onWorkflowEvent(WorkflowEvent.PalletWrapped(System.currentTimeMillis()))
@@ -530,19 +704,19 @@ private fun DemoControlsCard(
                 ) {
                     Text("Wrap Pallet")
                 }
-                OutlinedButton(
-                    onClick = {
-                        onWorkflowEvent(
-                            WorkflowEvent.ContainerContentUpdated(
-                                hasRemainingCargo = false,
-                                observedAt = System.currentTimeMillis(),
-                            ),
-                        )
-                    },
-                    enabled = enabled,
-                ) {
-                    Text("Container Empty")
-                }
+            }
+            OutlinedButton(
+                onClick = {
+                    onWorkflowEvent(
+                        WorkflowEvent.ContainerContentUpdated(
+                            hasRemainingCargo = false,
+                            observedAt = System.currentTimeMillis(),
+                        ),
+                    )
+                },
+                enabled = enabled,
+            ) {
+                Text("Container Empty")
             }
         }
     }
@@ -596,7 +770,7 @@ private fun SummaryRow(item: CargoSummaryRecord) {
         Column {
             Text(item.itemLabel, fontWeight = FontWeight.SemiBold)
             Text(
-                "${item.colorName} • ${item.markerText.ifBlank { "No OCR tag" }}",
+                "${item.colorName} | ${item.markerText.ifBlank { "No OCR tag" }}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -694,7 +868,7 @@ private fun EndpointCard() {
         ) {
             Text("Pilot Sync Profile", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "This Android app is prepared to sync through the same Mixport server stack, but it intentionally does not embed database credentials.",
+                text = "This Android app is prepared to sync through the same Mixport server stack, but it does not embed database credentials.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
@@ -826,5 +1000,13 @@ private fun formatTimestamp(epochMillis: Long): String {
     return Instant.ofEpochMilli(epochMillis)
         .atZone(ZoneId.systemDefault())
         .format(formatter)
+}
+
+private fun formatConfidence(confidence: Float?): String {
+    return if (confidence == null) {
+        "Warm-up"
+    } else {
+        "${(confidence * 100).roundToInt()}%"
+    }
 }
 
