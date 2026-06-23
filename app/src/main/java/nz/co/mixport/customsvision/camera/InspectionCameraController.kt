@@ -3,7 +3,6 @@ package nz.co.mixport.customsvision.camera
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Matrix
-import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Build
 import android.provider.MediaStore
@@ -13,6 +12,9 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.MediaStoreOutputOptions
+import androidx.camera.video.FallbackStrategy
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
 import androidx.camera.video.Recorder
 import androidx.camera.video.Recording
 import androidx.camera.video.VideoCapture
@@ -25,8 +27,6 @@ import com.google.mlkit.vision.objects.DetectedObject
 import com.google.mlkit.vision.objects.ObjectDetection
 import com.google.mlkit.vision.objects.ObjectDetector
 import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
-import kotlin.math.max
-import kotlin.math.min
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -36,9 +36,12 @@ class InspectionCameraController(
     private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var videoCapture: VideoCapture<Recorder>? = null
     private var activeRecording: Recording? = null
+    private var cameraProvider: ProcessCameraProvider? = null
     private var boundPreviewView: PreviewView? = null
     private var boundLifecycleOwner: LifecycleOwner? = null
     private var objectDetector: ObjectDetector? = null
+    private var isBinding = false
+    private var isCameraBound = false
 
     fun bind(
         previewView: PreviewView,
@@ -49,21 +52,32 @@ class InspectionCameraController(
     ) {
         if (boundPreviewView === previewView &&
             boundLifecycleOwner === lifecycleOwner &&
-            videoCapture != null
+            (isBinding || isCameraBound)
         ) {
             return
         }
+        boundPreviewView = previewView
+        boundLifecycleOwner = lifecycleOwner
+        isBinding = true
 
         val providerFuture = ProcessCameraProvider.getInstance(context)
         providerFuture.addListener(
             {
                 runCatching {
                     val cameraProvider = providerFuture.get()
+                    this.cameraProvider = cameraProvider
                     val preview = Preview.Builder().build().also {
-                        it.setSurfaceProvider(previewView.getSurfaceProvider())
+                        it.setSurfaceProvider(previewView.surfaceProvider)
                     }
-                    val recorder = Recorder.Builder().build()
-                    videoCapture = VideoCapture.withOutput(recorder)
+                    val recorder = Recorder.Builder()
+                        .setQualitySelector(
+                            QualitySelector.from(
+                                Quality.SD,
+                                FallbackStrategy.lowerQualityOrHigherThan(Quality.SD),
+                            ),
+                        )
+                        .build()
+                    val nextVideoCapture = VideoCapture.withOutput(recorder)
                     val imageAnalysis = ImageAnalysis.Builder()
                         .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -86,13 +100,17 @@ class InspectionCameraController(
                         lifecycleOwner,
                         CameraSelector.DEFAULT_BACK_CAMERA,
                         preview,
-                        videoCapture,
+                        nextVideoCapture,
                         imageAnalysis,
                     )
 
-                    boundPreviewView = previewView
-                    boundLifecycleOwner = lifecycleOwner
+                    videoCapture = nextVideoCapture
+                    isCameraBound = true
+                    isBinding = false
                 }.onFailure { throwable ->
+                    isBinding = false
+                    isCameraBound = false
+                    videoCapture = null
                     onError(throwable.message ?: "Failed to bind the camera.")
                 }
             },
@@ -152,6 +170,11 @@ class InspectionCameraController(
 
     fun release() {
         activeRecording?.close()
+        cameraProvider?.unbindAll()
+        cameraProvider = null
+        isBinding = false
+        isCameraBound = false
+        videoCapture = null
         objectDetector?.close()
         objectDetector = null
         cameraExecutor.shutdown()

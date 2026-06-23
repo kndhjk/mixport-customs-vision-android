@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -37,6 +38,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -44,14 +46,18 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -81,6 +87,9 @@ import kotlin.math.roundToInt
 private val TrackingGreen = Color(0xFF39D353)
 private val CountedGreen = Color(0xFF238636)
 private val OverlayScrim = Color(0x22000000)
+private val BrandGradientStart = Color(0xFFF45D22)
+private val BrandGradientEnd = Color(0xFFD94D1A)
+private val BrandTint = Color(0xFFFFF3EB)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -113,29 +122,46 @@ fun CustomsApp(viewModel: AppViewModel) {
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                ),
                 title = {
                     Column {
-                        Text("Mixport Customs Pilot")
+                        Text("Mixport Customs Vision")
                         Text(
-                            text = "Live tracking overlay, video capture, and pallet event logging",
+                            text = "Cargo tracking, pallet counting, and evidence capture",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.82f),
                         )
                     }
                 },
             )
         },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface,
+            ) {
                 NavigationBarItem(
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                    ),
                     selected = uiState.selectedDestination == AppDestination.LIVE,
                     onClick = { viewModel.selectDestination(AppDestination.LIVE) },
                     icon = { Icon(Icons.Outlined.CameraAlt, contentDescription = null) },
                     label = { Text("Live") },
                 )
                 NavigationBarItem(
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                    ),
                     selected = uiState.selectedDestination == AppDestination.HISTORY,
                     onClick = { viewModel.selectDestination(AppDestination.HISTORY) },
                     icon = { Icon(Icons.Outlined.Folder, contentDescription = null) },
@@ -192,7 +218,7 @@ private fun LiveScreen(
     onRecordingStarted: () -> Unit,
     onRecordingSaved: (String) -> Unit,
     onRecordingError: (String) -> Unit,
-) {
+    ) {
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -208,18 +234,7 @@ private fun LiveScreen(
             }
         }
         item {
-            SessionSetupCard(
-                uiState = uiState,
-                onContainerCodeChanged = onContainerCodeChanged,
-                onVesselNameChanged = onVesselNameChanged,
-                onOperatorNameChanged = onOperatorNameChanged,
-                onNotesChanged = onNotesChanged,
-                onStartSession = onStartSession,
-                onCloseSession = onCloseSession,
-            )
-        }
-        item {
-            StatusCard(uiState = uiState)
+            PilotHeroCard(uiState = uiState)
         }
         item {
             CameraCard(
@@ -233,9 +248,23 @@ private fun LiveScreen(
             )
         }
         item {
+            StatusCard(uiState = uiState)
+        }
+        item {
             LiveDetectionsCard(
                 uiState = uiState,
                 onCountVisibleDetections = onCountVisibleDetections,
+            )
+        }
+        item {
+            SessionSetupCard(
+                uiState = uiState,
+                onContainerCodeChanged = onContainerCodeChanged,
+                onVesselNameChanged = onVesselNameChanged,
+                onOperatorNameChanged = onOperatorNameChanged,
+                onNotesChanged = onNotesChanged,
+                onStartSession = onStartSession,
+                onCloseSession = onCloseSession,
             )
         }
         item {
@@ -264,6 +293,69 @@ private fun LiveScreen(
 }
 
 @Composable
+private fun PilotHeroCard(uiState: LiveInspectionUiState) {
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        shadowElevation = 4.dp,
+        color = Color.Transparent,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    brush = Brush.linearGradient(
+                        colors = listOf(BrandGradientStart, BrandGradientEnd),
+                    ),
+                )
+                .padding(20.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text(
+                    text = "Mixport pilot deck",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f),
+                )
+                Text(
+                    text = "Unload cargo with live camera tracking, pallet event capture, and shipment evidence on one screen.",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item {
+                        AssistChip(
+                            onClick = {},
+                            label = {
+                                Text(
+                                    if (uiState.cameraPermissionGranted) "Camera ready" else "Camera access needed",
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = {},
+                            label = {
+                                Text(
+                                    uiState.activeSession?.containerCode ?: "No live session",
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = {},
+                            label = {
+                                Text("Tracks ${uiState.liveDetections.size}")
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SessionSetupCard(
     uiState: LiveInspectionUiState,
     onContainerCodeChanged: (String) -> Unit,
@@ -275,10 +367,15 @@ private fun SessionSetupCard(
 ) {
     ElevatedCard {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Session Setup", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Use the same orange-white workflow language as the Mixport cargo pages: start a lane, keep the camera rolling, and archive pallet evidence at the end.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             OutlinedTextField(
                 value = uiState.draft.containerCode,
                 onValueChange = onContainerCodeChanged,
@@ -335,31 +432,37 @@ private fun SessionSetupCard(
 private fun StatusCard(uiState: LiveInspectionUiState) {
     ElevatedCard {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Workflow Status", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AssistChip(
-                    onClick = {},
-                    label = { Text("Phase: ${uiState.workflowState.phase.name}") },
-                )
-                AssistChip(
-                    onClick = {},
-                    label = {
-                        Text(
-                            if (uiState.workflowState.containerHasRemainingCargo) {
-                                "Container not empty"
-                            } else {
-                                "Container empty"
-                            },
-                        )
-                    },
-                )
-                AssistChip(
-                    onClick = {},
-                    label = { Text("Live tracks: ${uiState.liveDetections.size}") },
-                )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    AssistChip(
+                        onClick = {},
+                        label = { Text("Phase ${uiState.workflowState.phase.name}") },
+                    )
+                }
+                item {
+                    AssistChip(
+                        onClick = {},
+                        label = {
+                            Text(
+                                if (uiState.workflowState.containerHasRemainingCargo) {
+                                    "Cargo still in container"
+                                } else {
+                                    "Container looks empty"
+                                },
+                            )
+                        },
+                    )
+                }
+                item {
+                    AssistChip(
+                        onClick = {},
+                        label = { Text("Tracks ${uiState.liveDetections.size}") },
+                    )
+                }
             }
             val heartbeatText = uiState.lastFrameHeartbeatAt?.let {
                 "Vision heartbeat: ${formatTimestamp(it)}"
@@ -395,13 +498,35 @@ private fun CameraCard(
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val activeSession = uiState.activeSession
+    var previewView by remember { mutableStateOf<PreviewView?>(null) }
+
+    DisposableEffect(previewView, lifecycleOwner, uiState.cameraPermissionGranted) {
+        val boundPreviewView = previewView
+        if (uiState.cameraPermissionGranted && boundPreviewView != null) {
+            boundPreviewView.post {
+                cameraController.bind(
+                    previewView = boundPreviewView,
+                    lifecycleOwner = lifecycleOwner,
+                    onFrameHeartbeat = onHeartbeat,
+                    onDetections = onDetectionFrame,
+                    onError = onRecordingError,
+                )
+            }
+        }
+        onDispose {}
+    }
 
     ElevatedCard {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Live Camera", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Primary live zone for the customs pilot. This panel should open first and mirror the orange brand language from the Mixport cargo portal.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             if (!uiState.cameraPermissionGranted) {
                 Text(
                     text = "Camera permission is required to preview and track cargo.",
@@ -421,26 +546,32 @@ private fun CameraCard(
                             PreviewView(context).apply {
                                 implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                                 scaleType = PreviewView.ScaleType.FILL_CENTER
-                                cameraController.bind(
-                                    previewView = this,
-                                    lifecycleOwner = lifecycleOwner,
-                                    onFrameHeartbeat = onHeartbeat,
-                                    onDetections = onDetectionFrame,
-                                    onError = onRecordingError,
-                                )
+                                previewView = this
                             }
                         },
-                        update = { previewView ->
-                            cameraController.bind(
-                                previewView = previewView,
-                                lifecycleOwner = lifecycleOwner,
-                                onFrameHeartbeat = onHeartbeat,
-                                onDetections = onDetectionFrame,
-                                onError = onRecordingError,
-                            )
+                        update = { view ->
+                            previewView = view
                         },
                     )
                     LiveDetectionOverlay(detections = uiState.liveDetections)
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(12.dp),
+                        color = if (uiState.lastFrameHeartbeatAt == null) OverlayScrim else CountedGreen.copy(alpha = 0.88f),
+                        shape = RoundedCornerShape(999.dp),
+                    ) {
+                        Text(
+                            text = if (uiState.lastFrameHeartbeatAt == null) {
+                                "Connecting camera..."
+                            } else {
+                                "Live feed active"
+                            },
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                     if (uiState.liveDetections.isEmpty()) {
                         Surface(
                             modifier = Modifier
@@ -450,7 +581,11 @@ private fun CameraCard(
                             shape = RoundedCornerShape(999.dp),
                         ) {
                             Text(
-                                text = "No tracked object yet",
+                                text = if (uiState.lastFrameHeartbeatAt == null) {
+                                    "Point the camera at the cargo area"
+                                } else {
+                                    "No tracked object yet"
+                                },
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                 color = Color.White,
                                 style = MaterialTheme.typography.bodySmall,
@@ -557,12 +692,12 @@ private fun LiveDetectionsCard(
 ) {
     ElevatedCard {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Live Detections", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "This is now real on-device tracking. ML Kit provides the green boxes and track IDs. Use the count action to push currently visible cargo into the active pallet.",
+                text = "This section reflects the live green-box tracker. Count only the visible cargo that has already landed on the pallet.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -599,7 +734,7 @@ private fun LiveDetectionsCard(
 private fun DetectionRow(detection: LiveRecognition) {
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+            containerColor = BrandTint,
         ),
     ) {
         Column(
