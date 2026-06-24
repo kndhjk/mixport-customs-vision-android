@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import nz.co.mixport.customsvision.camera.LiveDetectionFrame
 import nz.co.mixport.customsvision.camera.LiveRecognition
-import nz.co.mixport.customsvision.camera.UniversalRecognition
+import nz.co.mixport.customsvision.camera.LiveTrackCountEngine
 import nz.co.mixport.customsvision.camera.UniversalRecognitionSnapshot
 import nz.co.mixport.customsvision.data.AppLanguage
 import nz.co.mixport.customsvision.data.AppPreferencesRepository
@@ -96,7 +96,7 @@ class AppViewModel(
         ),
     )
     val uiState: StateFlow<LiveInspectionUiState> = _uiState.asStateFlow()
-    private val countedTrackingIds = linkedSetOf<Int>()
+    private val trackCountEngine = LiveTrackCountEngine()
 
     init {
         refreshHistory()
@@ -270,13 +270,16 @@ class AppViewModel(
     }
 
     fun onDetections(frame: LiveDetectionFrame) {
+        val decoratedDetections = trackCountEngine.observeDetections(
+            detections = frame.detections,
+            analyzedAt = frame.analyzedAt,
+        )
         _uiState.update { state ->
             state.copy(
                 lastFrameHeartbeatAt = frame.analyzedAt,
-                liveDetections = frame.detections.map(::markCountedState),
-                universalRecognitionSnapshot = state.universalRecognitionSnapshot?.copy(
-                    items = state.universalRecognitionSnapshot.items.map(::markCountedRecognitionState),
-                ),
+                liveDetections = decoratedDetections,
+                universalRecognitionSnapshot = state.universalRecognitionSnapshot
+                    ?.let(trackCountEngine::decorateRecognitionSnapshot),
             )
         }
     }
@@ -295,20 +298,19 @@ class AppViewModel(
     }
 
     fun onUniversalRecognitionCompleted(snapshot: UniversalRecognitionSnapshot) {
+        val decoratedSnapshot = trackCountEngine.observeRecognition(snapshot)
         _uiState.update {
             it.copy(
                 isUniversalRecognitionRunning = false,
-                universalRecognitionSnapshot = snapshot.copy(
-                    items = snapshot.items.map(::markCountedRecognitionState),
-                ),
-                infoMessage = if (snapshot.items.isEmpty()) {
+                universalRecognitionSnapshot = decoratedSnapshot,
+                infoMessage = if (decoratedSnapshot.items.isEmpty()) {
                     it.appLanguage.pick(
                         "No recognizable cargo was found in the current view.",
                         "当前画面里没有识别出明确货物。",
                     )
                 } else {
                     it.appLanguage.pick(
-                        "Analyzed ${snapshot.items.size} visible cargo item(s).",
+                        "Analyzed ${decoratedSnapshot.items.size} visible cargo item(s).",
                         "已分析 ${snapshot.items.size} 个可见货物对象。",
                     )
                 },
@@ -358,7 +360,7 @@ class AppViewModel(
             return
         }
         viewModelScope.launch {
-            countedTrackingIds.clear()
+            trackCountEngine.resetSession()
             val session = repository.createSession(draft)
             refreshCurrentSession(
                 sessionId = session.id,
@@ -386,7 +388,7 @@ class AppViewModel(
                 !snapshot.workflowState.containerHasRemainingCargo
             repository.finishSession(session.id, isComplete)
             refreshHistory()
-            countedTrackingIds.clear()
+            trackCountEngine.resetSession()
             _uiState.update {
                 it.copy(
                     activeSession = null,
@@ -428,16 +430,16 @@ class AppViewModel(
 
         viewModelScope.launch {
             var latestSnapshot = _uiState.value
-            val palletRecognitionTrackingIds = latestSnapshot.universalRecognitionSnapshot?.items
+            val palletRecognitionTrackKeys = latestSnapshot.universalRecognitionSnapshot?.items
                 ?.mapNotNull { recognition ->
-                    recognition.trackingId?.takeIf { recognition.isPalletLike }
+                    recognition.trackKey.takeIf { recognition.isPalletLike && recognition.trackKey.isNotBlank() }
                 }
                 ?.toSet()
                 .orEmpty()
             if (latestSnapshot.workflowState.activePalletSequence == null) {
                 val hasVisiblePallet = latestSnapshot.liveDetections.any { detection ->
                     detection.isPalletCandidate ||
-                        detection.trackingId != null && palletRecognitionTrackingIds.contains(detection.trackingId)
+                        detection.trackKey.isNotBlank() && palletRecognitionTrackKeys.contains(detection.trackKey)
                 }
                 if (!hasVisiblePallet) {
                     _uiState.update {
@@ -454,14 +456,48 @@ class AppViewModel(
                 latestSnapshot = _uiState.value
             }
 
+            val recognitionByTrackKey = latestSnapshot.universalRecognitionSnapshot?.items
+                ?.mapNotNull { insight ->
+                    insight.trackKey.takeIf { it.isNotBlank() }?.let { trackKey -> trackKey to insight }
+                }
+                ?.toMap()
+                .orEmpty()
+
             val countableDetections = latestSnapshot.liveDetections.filter { detection ->
                 !detection.isPalletCandidate &&
-                    (detection.trackingId == null || !palletRecognitionTrackingIds.contains(detection.trackingId)) &&
-                    detection.trackingId != null &&
-                    !countedTrackingIds.contains(detection.trackingId)
+                    detection.trackKey.isNotBlank() &&
+                    !palletRecognitionTrackKeys.contains(detection.trackKey) &&
+                    detection.isInPalletZone &&
+                    detection.isCountReady &&
+                    !detection.isCounted &&
+                    hasReliableCargoIdentity(
+                        detection = detection,
+                        recognition = recognitionByTrackKey[detection.trackKey],
+                    )
             }
 
             if (countableDetections.isEmpty()) {
+                val stabilizingCount = latestSnapshot.liveDetections.count { detection ->
+                    !detection.isPalletCandidate &&
+                        !detection.isCounted &&
+                        detection.isInPalletZone &&
+                        detection.stableFrameCount < LiveTrackCountEngine.DEFAULT_MIN_STABLE_FRAMES
+                }
+                val awaitingPlacementCount = latestSnapshot.liveDetections.count { detection ->
+                    !detection.isPalletCandidate &&
+                        !detection.isCounted &&
+                        !detection.isInPalletZone
+                }
+                val awaitingAnalysisCount = latestSnapshot.liveDetections.count { detection ->
+                    !detection.isPalletCandidate &&
+                        !detection.isCounted &&
+                        detection.isInPalletZone &&
+                        detection.stableFrameCount >= LiveTrackCountEngine.DEFAULT_MIN_STABLE_FRAMES &&
+                        !hasReliableCargoIdentity(
+                            detection = detection,
+                            recognition = recognitionByTrackKey[detection.trackKey],
+                        )
+                }
                 _uiState.update {
                     it.copy(
                         infoMessage = it.appLanguage.pick(
@@ -471,19 +507,43 @@ class AppViewModel(
                         errorMessage = null,
                     )
                 }
+                if (stabilizingCount > 0) {
+                    _uiState.update {
+                        it.copy(
+                            infoMessage = it.appLanguage.pick(
+                                "$stabilizingCount tracked object(s) are still stabilizing. Hold the camera steady for another moment.",
+                                "è¿˜æœ‰ $stabilizingCount ä¸ªè·Ÿè¸ªå¯¹è±¡åœ¨ç¨³å®šä¸­ï¼Œè¯·å†ç¨å¾®ä¿æŒç”»é¢ç¨³å®šã€‚",
+                            ),
+                            errorMessage = null,
+                        )
+                    }
+                } else if (awaitingPlacementCount > 0) {
+                    _uiState.update {
+                        it.copy(
+                            infoMessage = it.appLanguage.pick(
+                                "$awaitingPlacementCount tracked object(s) are visible but not yet sitting on the pallet zone.",
+                                "$awaitingPlacementCount 个跟踪对象已出现，但还没有进入托盘装货区域。",
+                            ),
+                            errorMessage = null,
+                        )
+                    }
+                } else if (awaitingAnalysisCount > 0) {
+                    _uiState.update {
+                        it.copy(
+                            infoMessage = it.appLanguage.pick(
+                                "$awaitingAnalysisCount stable object(s) need richer OCR or label evidence before counting.",
+                                "$awaitingAnalysisCount 个稳定对象还需要更多 OCR 或标签证据后才会计数。",
+                            ),
+                            errorMessage = null,
+                        )
+                    }
+                }
                 return@launch
             }
 
-            val recognitionByTrackingId = latestSnapshot.universalRecognitionSnapshot?.items
-                ?.mapNotNull { insight ->
-                    insight.trackingId?.let { trackingId -> trackingId to insight }
-                }
-                ?.toMap()
-                .orEmpty()
-
+            val countedAt = System.currentTimeMillis()
             countableDetections.forEach { detection ->
-                val recognition = detection.trackingId?.let(recognitionByTrackingId::get)
-                detection.trackingId?.let(countedTrackingIds::add)
+                val recognition = detection.trackKey.let(recognitionByTrackKey::get)
                 applyWorkflowEvent(
                     WorkflowEvent.CargoPlaced(
                         itemLabel = recognition?.bestLabel?.ifBlank { detection.label } ?: detection.label,
@@ -491,17 +551,26 @@ class AppViewModel(
                         markerText = recognition?.markerText?.ifBlank {
                             detection.category.takeIf { it != "Unknown" }.orEmpty()
                         } ?: detection.category.takeIf { it != "Unknown" }.orEmpty(),
-                        observedAt = System.currentTimeMillis(),
+                        observedAt = countedAt,
+                        trackKey = detection.trackKey,
+                        stableFrameCount = detection.stableFrameCount,
+                        detectionConfidence = detection.confidence,
+                        recognitionConfidence = recognition?.confidence,
                     ),
                 )
             }
+            trackCountEngine.markCounted(
+                detections = countableDetections,
+                countedAt = countedAt,
+            )
 
             _uiState.update {
                 it.copy(
-                    liveDetections = it.liveDetections.map(::markCountedState),
-                    universalRecognitionSnapshot = it.universalRecognitionSnapshot?.copy(
-                        items = it.universalRecognitionSnapshot.items.map(::markCountedRecognitionState),
+                    liveDetections = decorateLiveDetections(
+                        detections = it.liveDetections,
+                        analyzedAt = countedAt,
                     ),
+                    universalRecognitionSnapshot = decorateRecognitionSnapshot(it.universalRecognitionSnapshot),
                     infoMessage = it.appLanguage.pick(
                         "${countableDetections.size} tracked object(s) counted from the live view.",
                         "已从实时画面统计 ${countableDetections.size} 个跟踪对象。",
@@ -589,6 +658,7 @@ class AppViewModel(
                             containerEmptyAtClose = action.containerEmptyAtClose,
                         )
                         activePalletId = null
+                        trackCountEngine.resetForNextPallet()
                         infoMessage = currentLanguage().pick(
                             "Pallet #${action.sequenceNumber} archived.",
                             "托盘 #${action.sequenceNumber} 已归档。",
@@ -627,6 +697,7 @@ class AppViewModel(
         val currentItems = currentPalletId?.let { repository.listPalletItems(it) }.orEmpty()
         val events = repository.listEvents(sessionId)
         val history = repository.listSessions()
+        val shouldResetVisualState = currentPalletId == null && workflowState.phase != SessionPhase.LOADING
 
         _uiState.update {
             it.copy(
@@ -637,7 +708,19 @@ class AppViewModel(
                 sealedPallets = pallets.filter { detail -> detail.pallet.closedAt != null },
                 recentEvents = events,
                 history = history,
-                liveDetections = it.liveDetections.map(::markCountedState),
+                liveDetections = if (shouldResetVisualState) {
+                    emptyList()
+                } else {
+                    decorateLiveDetections(
+                        detections = it.liveDetections,
+                        analyzedAt = it.lastFrameHeartbeatAt ?: System.currentTimeMillis(),
+                    )
+                },
+                universalRecognitionSnapshot = if (shouldResetVisualState) {
+                    null
+                } else {
+                    decorateRecognitionSnapshot(it.universalRecognitionSnapshot)
+                },
                 infoMessage = infoMessage,
                 errorMessage = null,
                 isRecording = isRecording,
@@ -646,16 +729,20 @@ class AppViewModel(
         }
     }
 
-    private fun markCountedState(detection: LiveRecognition): LiveRecognition {
-        return detection.copy(
-            isCounted = detection.trackingId != null && countedTrackingIds.contains(detection.trackingId),
+    private fun decorateLiveDetections(
+        detections: List<LiveRecognition>,
+        analyzedAt: Long,
+    ): List<LiveRecognition> {
+        return trackCountEngine.decorateDetections(
+            detections = detections,
+            analyzedAt = analyzedAt,
         )
     }
 
-    private fun markCountedRecognitionState(recognition: UniversalRecognition): UniversalRecognition {
-        return recognition.copy(
-            isCounted = recognition.trackingId != null && countedTrackingIds.contains(recognition.trackingId),
-        )
+    private fun decorateRecognitionSnapshot(
+        snapshot: UniversalRecognitionSnapshot?,
+    ): UniversalRecognitionSnapshot? {
+        return snapshot?.let(trackCountEngine::decorateRecognitionSnapshot)
     }
 
     private suspend fun lookupBarcode(barcode: String): BarcodeLookupResult? {
@@ -734,10 +821,36 @@ class AppViewModel(
         return currentLanguage().pick("Error", "错误")
     }
 
+    private fun hasReliableCargoIdentity(
+        detection: LiveRecognition,
+        recognition: nz.co.mixport.customsvision.camera.UniversalRecognition?,
+    ): Boolean {
+        val recognitionLabel = recognition?.bestLabel.orEmpty()
+        if (isMeaningfulCargoLabel(recognitionLabel)) {
+            return true
+        }
+        if (isMeaningfulCargoLabel(detection.label)) {
+            return true
+        }
+        return isMeaningfulCargoLabel(detection.category) &&
+            (detection.confidence ?: 0f) >= 0.72f
+    }
+
+    private fun isMeaningfulCargoLabel(value: String): Boolean {
+        return value.isNotBlank() && value !in GENERIC_CARGO_LABELS
+    }
+
     private fun currentLanguage(): AppLanguage = _uiState.value.appLanguage
 
     companion object {
         private val BARCODE_PATTERN = Regex("^[A-Z0-9_\\-/]{6,40}$")
+        private val GENERIC_CARGO_LABELS = setOf(
+            "Tracked cargo",
+            "Pallet candidate",
+            "Wood pallet base",
+            "Unknown",
+            "Unclassified",
+        )
     }
 }
 

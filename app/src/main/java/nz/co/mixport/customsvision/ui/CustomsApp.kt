@@ -74,6 +74,7 @@ import nz.co.mixport.customsvision.BuildConfig
 import nz.co.mixport.customsvision.camera.InspectionCameraController
 import nz.co.mixport.customsvision.camera.LiveDetectionFrame
 import nz.co.mixport.customsvision.camera.LiveRecognition
+import nz.co.mixport.customsvision.camera.LiveTrackCountEngine
 import nz.co.mixport.customsvision.camera.UniversalRecognition
 import nz.co.mixport.customsvision.data.CargoSummaryRecord
 import nz.co.mixport.customsvision.data.InspectionSessionRecord
@@ -805,6 +806,40 @@ private fun LiveDetectionsCard(
     onAnalyzeVisibleCargo: () -> Unit,
 ) {
     val language = uiState.appLanguage
+    val recognitionByTrackKey = uiState.universalRecognitionSnapshot?.items
+        ?.mapNotNull { item -> item.trackKey.takeIf { it.isNotBlank() }?.let { trackKey -> trackKey to item } }
+        ?.toMap()
+        .orEmpty()
+    val genericLabels = setOf("Tracked cargo", "Pallet candidate", "Wood pallet base", "Unknown", "Unclassified")
+    fun hasReliableIdentity(detection: LiveRecognition): Boolean {
+        val recognition = recognitionByTrackKey[detection.trackKey]
+        return recognition?.bestLabel?.let { it.isNotBlank() && it !in genericLabels } == true ||
+            detection.label.isNotBlank() && detection.label !in genericLabels ||
+            detection.category.isNotBlank() && detection.category !in genericLabels
+    }
+    val readyToCount = uiState.liveDetections.count { detection ->
+        !detection.isPalletCandidate &&
+            detection.isInPalletZone &&
+            detection.isCountReady &&
+            hasReliableIdentity(detection) &&
+            !detection.isCounted
+    }
+    val stabilizing = uiState.liveDetections.count { detection ->
+        !detection.isPalletCandidate &&
+            detection.isInPalletZone &&
+            detection.stableFrameCount < LiveTrackCountEngine.DEFAULT_MIN_STABLE_FRAMES &&
+            !detection.isCounted
+    }
+    val awaitingPlacement = uiState.liveDetections.count { detection ->
+        !detection.isPalletCandidate && !detection.isInPalletZone && !detection.isCounted
+    }
+    val awaitingAnalysis = uiState.liveDetections.count { detection ->
+        !detection.isPalletCandidate &&
+            detection.isInPalletZone &&
+            detection.stableFrameCount >= LiveTrackCountEngine.DEFAULT_MIN_STABLE_FRAMES &&
+            !hasReliableIdentity(detection) &&
+            !detection.isCounted
+    }
     ElevatedCard {
         Column(
             modifier = Modifier.padding(18.dp),
@@ -827,7 +862,7 @@ private fun LiveDetectionsCard(
                     Button(
                         onClick = onCountVisibleDetections,
                         enabled = uiState.activeSession != null &&
-                            uiState.liveDetections.any { !it.isPalletCandidate && !it.isCounted },
+                            readyToCount > 0,
                     ) {
                         Text(language.pick("Count Visible Cargo", "计数当前货物"))
                     }
@@ -857,6 +892,38 @@ private fun LiveDetectionsCard(
                                     "已追踪 ${uiState.liveDetections.size} 个",
                                 ),
                             )
+                        },
+                    )
+                }
+                item {
+                    AssistChip(
+                        onClick = {},
+                        label = {
+                            Text(language.pick("Ready $readyToCount", "可计数 $readyToCount"))
+                        },
+                    )
+                }
+                item {
+                    AssistChip(
+                        onClick = {},
+                        label = {
+                            Text(language.pick("Stabilizing $stabilizing", "稳定中 $stabilizing"))
+                        },
+                    )
+                }
+                item {
+                    AssistChip(
+                        onClick = {},
+                        label = {
+                            Text(language.pick("Off pallet $awaitingPlacement", "未上托盘 $awaitingPlacement"))
+                        },
+                    )
+                }
+                item {
+                    AssistChip(
+                        onClick = {},
+                        label = {
+                            Text(language.pick("Need labels $awaitingAnalysis", "待补标签 $awaitingAnalysis"))
                         },
                     )
                 }
@@ -951,7 +1018,9 @@ private fun DetectionRow(
                             when {
                                 detection.isPalletCandidate -> language.pick("Pallet", "托盘")
                                 detection.isCounted -> language.pick("Counted", "已计数")
-                                else -> language.pick("Visible", "可见")
+                                detection.isCountReady -> language.pick("Ready", "可计数")
+                                !detection.isInPalletZone -> language.pick("Off pallet", "未上托盘")
+                                else -> language.pick("Stabilizing", "稳定中")
                             },
                         )
                     },
@@ -959,25 +1028,57 @@ private fun DetectionRow(
             }
             Text(
                 text = language.pick(
-                    "Category: ${detection.category}",
-                    "类别：${detection.category}",
+                    "Category: " + detection.category,
+                    "类别：" + detection.category,
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
                 text = language.pick(
-                    "Confidence: ${formatConfidence(detection.confidence)}",
-                    "置信度：${formatConfidence(detection.confidence)}",
+                    "Confidence: " + formatConfidence(detection.confidence),
+                    "置信度：" + formatConfidence(detection.confidence),
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Text(
+                text = language.pick(
+                    "Stable frames: " + detection.stableFrameCount + "/" + LiveTrackCountEngine.DEFAULT_MIN_STABLE_FRAMES,
+                    "稳定帧数：" + detection.stableFrameCount + "/" + LiveTrackCountEngine.DEFAULT_MIN_STABLE_FRAMES,
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (detection.isCountReady) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Text(
+                text = language.pick(
+                    if (detection.isInPalletZone) {
+                        "Pallet zone: inside loading area"
+                    } else {
+                        "Pallet zone: not seated on pallet yet"
+                    },
+                    if (detection.isInPalletZone) {
+                        "托盘区域：已进入装货区域"
+                    } else {
+                        "托盘区域：还没有坐落到托盘上"
+                    },
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (detection.isInPalletZone) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
             detection.palletScore?.let { score ->
                 Text(
                     text = language.pick(
-                        "Pallet profile: ${formatPercent(score)}",
-                        "托盘特征匹配：${formatPercent(score)}",
+                        "Pallet profile: " + formatPercent(score),
+                        "托盘特征匹配：" + formatPercent(score),
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = if (detection.isPalletCandidate) {
@@ -1024,7 +1125,9 @@ private fun RecognitionRow(
                             when {
                                 recognition.isPalletLike -> language.pick("Pallet base", "托盘底座")
                                 recognition.isCounted -> language.pick("Counted", "已计数")
-                                else -> language.pick("Ready", "待确认")
+                                recognition.isCountReady -> language.pick("Ready", "可计数")
+                                !recognition.isInPalletZone -> language.pick("Off pallet", "未上托盘")
+                                else -> language.pick("Stabilizing", "稳定中")
                             },
                         )
                     },
@@ -1033,8 +1136,8 @@ private fun RecognitionRow(
             if (recognition.sourceLabel != recognition.bestLabel) {
                 Text(
                     text = language.pick(
-                        "Tracked as: ${localizedCargoLabel(language, recognition.sourceLabel)}",
-                        "原始跟踪标签：${localizedCargoLabel(language, recognition.sourceLabel)}",
+                        "Tracked as: " + localizedCargoLabel(language, recognition.sourceLabel),
+                        "原始跟踪标签：" + localizedCargoLabel(language, recognition.sourceLabel),
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1042,8 +1145,8 @@ private fun RecognitionRow(
             }
             Text(
                 text = language.pick(
-                    "Color: ${recognition.dominantColor}",
-                    "颜色：${recognition.dominantColor}",
+                    "Color: " + recognition.dominantColor,
+                    "颜色：" + recognition.dominantColor,
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1060,33 +1163,65 @@ private fun RecognitionRow(
             }
             Text(
                 text = language.pick(
-                    "OCR / marker: ${recognition.markerText.ifBlank { "None detected" }}",
-                    "OCR / 标记：${recognition.markerText.ifBlank { "未识别" }}",
+                    "OCR / marker: " + recognition.markerText.ifBlank { "None detected" },
+                    "OCR / 标记：" + recognition.markerText.ifBlank { "未识别" },
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
                 text = language.pick(
-                    "Label hints: ${recognition.labelHints.ifEmpty { listOf("No hints") }.joinToString()}",
-                    "标签线索：${recognition.labelHints.ifEmpty { listOf("无") }.joinToString()}",
+                    "Label hints: " + recognition.labelHints.ifEmpty { listOf("No hints") }.joinToString(),
+                    "标签线索：" + recognition.labelHints.ifEmpty { listOf("无") }.joinToString(),
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
                 text = language.pick(
-                    "Confidence: ${formatConfidence(recognition.confidence)}",
-                    "置信度：${formatConfidence(recognition.confidence)}",
+                    "Confidence: " + formatConfidence(recognition.confidence),
+                    "置信度：" + formatConfidence(recognition.confidence),
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = language.pick(
+                    "Stable frames: " + recognition.stableFrameCount + "/" + LiveTrackCountEngine.DEFAULT_MIN_STABLE_FRAMES,
+                    "稳定帧数：" + recognition.stableFrameCount + "/" + LiveTrackCountEngine.DEFAULT_MIN_STABLE_FRAMES,
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (recognition.isCountReady) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Text(
+                text = language.pick(
+                    if (recognition.isInPalletZone) {
+                        "Pallet zone: inside loading area"
+                    } else {
+                        "Pallet zone: not seated on pallet yet"
+                    },
+                    if (recognition.isInPalletZone) {
+                        "托盘区域：已进入装货区域"
+                    } else {
+                        "托盘区域：还没有坐落到托盘上"
+                    },
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (recognition.isInPalletZone) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
             )
             recognition.palletScore?.let { score ->
                 Text(
                     text = language.pick(
-                        "Pallet profile: ${formatPercent(score)}",
-                        "托盘特征匹配：${formatPercent(score)}",
+                        "Pallet profile: " + formatPercent(score),
+                        "托盘特征匹配：" + formatPercent(score),
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = if (recognition.isPalletLike) {

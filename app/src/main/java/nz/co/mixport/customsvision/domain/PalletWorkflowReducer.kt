@@ -88,7 +88,7 @@ class PalletWorkflowReducer {
                     eventType = "CARGO_COUNTED",
                     message = "${event.itemLabel} counted on pallet #$sequence.",
                     payloadJson =
-                        """{"palletSequence":$sequence,"itemLabel":"${event.itemLabel}","color":"${event.colorName}","marker":"${event.markerText}","quantity":${event.quantity}}""",
+                        """{"palletSequence":$sequence,"itemLabel":"${event.itemLabel}","color":"${event.colorName}","marker":"${event.markerText}","quantity":${event.quantity},"trackKey":"${event.trackKey}","stableFrameCount":${event.stableFrameCount},"detectionConfidence":${event.detectionConfidence ?: "null"},"recognitionConfidence":${event.recognitionConfidence ?: "null"}}""",
                     recordedAt = event.observedAt,
                 ),
             )

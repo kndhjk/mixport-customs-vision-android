@@ -31,6 +31,10 @@ sealed interface WorkflowEvent {
         val markerText: String,
         val quantity: Int = 1,
         val observedAt: Long,
+        val trackKey: String = "",
+        val stableFrameCount: Int = 0,
+        val detectionConfidence: Float? = null,
+        val recognitionConfidence: Float? = null,
     ) : WorkflowEvent
 
     data class PalletWrapped(val observedAt: Long) : WorkflowEvent
@@ -79,4 +83,3 @@ data class WorkflowTransition(
     val state: WorkflowState,
     val actions: List<WorkflowAction>,
 )
-

@@ -68,53 +68,130 @@ class InspectionCameraController(
     private val cargoVocabulary = listOf(
         CargoVocabularyEntry(
             label = "Electric kettle",
-            keywords = setOf("kettle", "teapot", "water boiler", "boiler", "coffee pot"),
+            keywords = setOf("kettle", "teapot", "water boiler", "boiler", "coffee pot", "烧水壶", "水壶"),
         ),
         CargoVocabularyEntry(
             label = "Cup / mug",
-            keywords = setOf("cup", "mug", "tumbler", "glass", "teacup"),
+            keywords = setOf("cup", "mug", "tumbler", "glass", "teacup", "杯", "杯子", "马克杯"),
         ),
         CargoVocabularyEntry(
             label = "Bowl",
-            keywords = setOf("bowl", "dish", "basin"),
-        ),
-        CargoVocabularyEntry(
-            label = "Chopsticks / cutlery",
-            keywords = setOf("chopstick", "chopsticks", "cutlery", "utensil", "utensils", "sticks"),
-        ),
-        CargoVocabularyEntry(
-            label = "Pen / marker",
-            keywords = setOf("pen", "marker", "pencil", "stylus"),
-        ),
-        CargoVocabularyEntry(
-            label = "Computer",
-            keywords = setOf("computer", "desktop", "monitor", "display", "screen"),
-        ),
-        CargoVocabularyEntry(
-            label = "Laptop",
-            keywords = setOf("laptop", "notebook computer", "macbook"),
-        ),
-        CargoVocabularyEntry(
-            label = "Notebook / book",
-            keywords = setOf("notebook", "book", "exercise book", "journal"),
-        ),
-        CargoVocabularyEntry(
-            label = "Keyboard",
-            keywords = setOf("keyboard", "keypad"),
-        ),
-        CargoVocabularyEntry(
-            label = "Carton / box",
-            keywords = setOf("carton", "box", "package", "parcel", "crate"),
-        ),
-        CargoVocabularyEntry(
-            label = "Bottle",
-            keywords = setOf("bottle", "thermos", "flask"),
+            keywords = setOf("bowl", "dish", "basin", "碗"),
         ),
         CargoVocabularyEntry(
             label = "Plate",
-            keywords = setOf("plate", "tray"),
+            keywords = setOf("plate", "tray", "盘", "盘子", "托盘餐盘"),
+        ),
+        CargoVocabularyEntry(
+            label = "Chopsticks / cutlery",
+            keywords = setOf("chopstick", "chopsticks", "cutlery", "utensil", "utensils", "sticks", "筷", "筷子", "餐具"),
+        ),
+        CargoVocabularyEntry(
+            label = "Spoon / fork",
+            keywords = setOf("spoon", "fork", "ladle", "勺", "勺子", "叉子"),
+        ),
+        CargoVocabularyEntry(
+            label = "Pot / pan",
+            keywords = setOf("pot", "pan", "cookware", "skillet", "锅", "锅具", "平底锅"),
+        ),
+        CargoVocabularyEntry(
+            label = "Pen / marker",
+            keywords = setOf("pen", "marker", "pencil", "stylus", "签字笔", "笔", "记号笔"),
+        ),
+        CargoVocabularyEntry(
+            label = "Computer",
+            keywords = setOf("computer", "desktop", "monitor", "display", "screen", "电脑", "显示器"),
+        ),
+        CargoVocabularyEntry(
+            label = "Laptop",
+            keywords = setOf("laptop", "notebook computer", "macbook", "笔记本电脑", "手提电脑"),
+        ),
+        CargoVocabularyEntry(
+            label = "Notebook / book",
+            keywords = setOf("notebook", "book", "exercise book", "journal", "笔记本", "本子", "书"),
+        ),
+        CargoVocabularyEntry(
+            label = "Keyboard",
+            keywords = setOf("keyboard", "keypad", "键盘"),
+        ),
+        CargoVocabularyEntry(
+            label = "Mouse / pointer",
+            keywords = setOf("mouse", "computer mouse", "鼠标"),
+        ),
+        CargoVocabularyEntry(
+            label = "Phone / tablet",
+            keywords = setOf("phone", "smartphone", "mobile phone", "tablet", "ipad", "手机", "平板"),
+        ),
+        CargoVocabularyEntry(
+            label = "Printer",
+            keywords = setOf("printer", "scanner", "打印机"),
+        ),
+        CargoVocabularyEntry(
+            label = "Cable / charger",
+            keywords = setOf("cable", "charger", "adapter", "wire", "cord", "数据线", "充电器", "线材"),
+        ),
+        CargoVocabularyEntry(
+            label = "Speaker / audio",
+            keywords = setOf("speaker", "audio", "sound box", "headphone", "耳机", "音箱", "音响"),
+        ),
+        CargoVocabularyEntry(
+            label = "Carton / box",
+            keywords = setOf("carton", "box", "package", "parcel", "crate", "箱", "纸箱", "盒子"),
+        ),
+        CargoVocabularyEntry(
+            label = "Bottle",
+            keywords = setOf("bottle", "thermos", "flask", "瓶", "瓶子", "保温瓶"),
+        ),
+        CargoVocabularyEntry(
+            label = "Bag / backpack",
+            keywords = setOf("bag", "backpack", "handbag", "luggage bag", "包", "背包", "手提包"),
+        ),
+        CargoVocabularyEntry(
+            label = "Suitcase / luggage",
+            keywords = setOf("suitcase", "luggage", "travel case", "行李箱", "旅行箱"),
+        ),
+        CargoVocabularyEntry(
+            label = "Chair / stool",
+            keywords = setOf("chair", "stool", "seat", "椅子", "凳子"),
+        ),
+        CargoVocabularyEntry(
+            label = "Lamp / lighting",
+            keywords = setOf("lamp", "light", "lantern", "台灯", "灯具"),
+        ),
+        CargoVocabularyEntry(
+            label = "Fan / appliance",
+            keywords = setOf("fan", "blower", "ventilator", "电风扇", "风扇"),
+        ),
+        CargoVocabularyEntry(
+            label = "Rice cooker / appliance",
+            keywords = setOf("rice cooker", "appliance", "kitchen appliance", "电饭煲", "小家电"),
+        ),
+        CargoVocabularyEntry(
+            label = "Clothing / fabric",
+            keywords = setOf("clothing", "garment", "shirt", "pants", "fabric", "衣服", "服装", "布料"),
+        ),
+        CargoVocabularyEntry(
+            label = "Toy / gift",
+            keywords = setOf("toy", "doll", "gift", "玩具", "礼品"),
+        ),
+        CargoVocabularyEntry(
+            label = "Helmet / safety gear",
+            keywords = setOf("helmet", "hard hat", "safety helmet", "头盔", "安全帽"),
+        ),
+        CargoVocabularyEntry(
+            label = "Umbrella",
+            keywords = setOf("umbrella", "伞", "雨伞"),
+        ),
+        CargoVocabularyEntry(
+            label = "Tissue / paper goods",
+            keywords = setOf("tissue", "paper towel", "napkin", "纸巾", "抽纸"),
+        ),
+        CargoVocabularyEntry(
+            label = "Detergent / household liquids",
+            keywords = setOf("detergent", "cleaner", "liquid soap", "washing liquid", "清洁剂", "洗衣液", "洗洁精"),
         ),
     )
+    private val cargoLabelResolver = CargoLabelResolver()
     private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var videoCapture: VideoCapture<Recorder>? = null
     private var activeRecording: Recording? = null
@@ -333,7 +410,7 @@ class InspectionCameraController(
     private fun bundledImageLabeler(): ImageLabeler {
         return imageLabeler ?: ImageLabeling.getClient(
             ImageLabelerOptions.Builder()
-                .setConfidenceThreshold(0.35f)
+                .setConfidenceThreshold(0.28f)
                 .build(),
         ).also { imageLabeler = it }
     }
@@ -404,7 +481,7 @@ class InspectionCameraController(
             .map { it.text.toReadableLabel() }
             .filter { it.isNotBlank() }
             .distinct()
-            .take(3)
+            .take(5)
         val dominantColor = detectDominantColor(croppedBitmap)
         val palletScore = scoreWoodPalletProfile(
             detection = detection,
@@ -473,17 +550,11 @@ class InspectionCameraController(
         markerText: String,
         sourceLabel: String,
     ): String? {
-        val normalizedCorpus = buildList {
-            add(sourceLabel)
-            add(markerText)
-            addAll(labelHints)
-        }
-            .joinToString(" ")
-            .lowercase()
-
-        return cargoVocabulary.firstOrNull { entry ->
-            entry.keywords.any { keyword -> normalizedCorpus.contains(keyword) }
-        }?.label
+        return cargoLabelResolver.resolve(
+            sourceLabel = sourceLabel,
+            markerText = markerText,
+            labelHints = labelHints,
+        )?.label
     }
 
     private fun normalizedProfileMatch(

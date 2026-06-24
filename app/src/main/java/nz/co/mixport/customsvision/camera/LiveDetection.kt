@@ -17,12 +17,22 @@ data class LiveRecognition(
     val isPalletCandidate: Boolean,
     val palletScore: Float? = null,
     val isCounted: Boolean = false,
+    val trackKey: String = "",
+    val stableFrameCount: Int = 0,
+    val isCountReady: Boolean = false,
+    val isInPalletZone: Boolean = false,
 ) {
     val width: Float
         get() = right - left
 
     val height: Float
         get() = bottom - top
+
+    val centerX: Float
+        get() = left + width / 2f
+
+    val centerY: Float
+        get() = top + height / 2f
 
     val overlayTitle: String
         get() = buildString {
@@ -50,6 +60,10 @@ data class UniversalRecognition(
     val isPalletLike: Boolean = false,
     val palletScore: Float? = null,
     val isCounted: Boolean = false,
+    val trackKey: String = "",
+    val stableFrameCount: Int = 0,
+    val isCountReady: Boolean = false,
+    val isInPalletZone: Boolean = false,
 ) {
     val displayTitle: String
         get() = buildString {
