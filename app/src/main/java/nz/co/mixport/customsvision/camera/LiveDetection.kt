@@ -33,3 +33,27 @@ data class LiveRecognition(
         }
 }
 
+data class UniversalRecognitionSnapshot(
+    val analyzedAt: Long,
+    val items: List<UniversalRecognition>,
+)
+
+data class UniversalRecognition(
+    val trackingId: Int?,
+    val sourceLabel: String,
+    val bestLabel: String,
+    val confidence: Float?,
+    val dominantColor: String,
+    val markerText: String,
+    val labelHints: List<String>,
+    val isCounted: Boolean = false,
+) {
+    val displayTitle: String
+        get() = buildString {
+            append(bestLabel)
+            trackingId?.let {
+                append(" #")
+                append(it)
+            }
+        }
+}

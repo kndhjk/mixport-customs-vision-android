@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import nz.co.mixport.customsvision.camera.LiveDetectionFrame
 import nz.co.mixport.customsvision.camera.LiveRecognition
+import nz.co.mixport.customsvision.camera.UniversalRecognition
+import nz.co.mixport.customsvision.camera.UniversalRecognitionSnapshot
 import nz.co.mixport.customsvision.data.CargoSummaryRecord
 import nz.co.mixport.customsvision.data.EventLogRecord
 import nz.co.mixport.customsvision.data.InspectionSessionRecord
@@ -42,6 +44,8 @@ data class LiveInspectionUiState(
     val cameraPermissionGranted: Boolean = false,
     val lastFrameHeartbeatAt: Long? = null,
     val liveDetections: List<LiveRecognition> = emptyList(),
+    val isUniversalRecognitionRunning: Boolean = false,
+    val universalRecognitionSnapshot: UniversalRecognitionSnapshot? = null,
     val infoMessage: String? = null,
     val errorMessage: String? = null,
 )
@@ -95,8 +99,42 @@ class AppViewModel(
             state.copy(
                 lastFrameHeartbeatAt = frame.analyzedAt,
                 liveDetections = frame.detections.map(::markCountedState),
+                universalRecognitionSnapshot = state.universalRecognitionSnapshot?.copy(
+                    items = state.universalRecognitionSnapshot.items.map(::markCountedRecognitionState),
+                ),
             )
         }
+    }
+
+    fun onUniversalRecognitionStarted() {
+        _uiState.update {
+            it.copy(
+                isUniversalRecognitionRunning = true,
+                infoMessage = "Analyzing visible cargo with OCR, color, and generic labels...",
+                errorMessage = null,
+            )
+        }
+    }
+
+    fun onUniversalRecognitionCompleted(snapshot: UniversalRecognitionSnapshot) {
+        _uiState.update {
+            it.copy(
+                isUniversalRecognitionRunning = false,
+                universalRecognitionSnapshot = snapshot.copy(
+                    items = snapshot.items.map(::markCountedRecognitionState),
+                ),
+                infoMessage = if (snapshot.items.isEmpty()) {
+                    "No recognizable cargo was found in the current view."
+                } else {
+                    "Analyzed ${snapshot.items.size} visible cargo item(s)."
+                },
+                errorMessage = null,
+            )
+        }
+    }
+
+    fun onUniversalRecognitionError(message: String) {
+        _uiState.update { it.copy(isUniversalRecognitionRunning = false, errorMessage = message) }
     }
 
     fun onRecordingSaved(recordingUri: String) {
@@ -139,6 +177,12 @@ class AppViewModel(
                 currentPalletId = null,
                 infoMessage = "Session ${session.containerCode} started.",
             )
+            _uiState.update {
+                it.copy(
+                    isUniversalRecognitionRunning = false,
+                    universalRecognitionSnapshot = null,
+                )
+            }
         }
     }
 
@@ -160,6 +204,8 @@ class AppViewModel(
                     sealedPallets = emptyList(),
                     recentEvents = emptyList(),
                     liveDetections = emptyList(),
+                    isUniversalRecognitionRunning = false,
+                    universalRecognitionSnapshot = null,
                     isRecording = false,
                     infoMessage = "Session closed.",
                     errorMessage = null,
@@ -211,13 +257,23 @@ class AppViewModel(
                 return@launch
             }
 
+            val recognitionByTrackingId = latestSnapshot.universalRecognitionSnapshot?.items
+                ?.mapNotNull { insight ->
+                    insight.trackingId?.let { trackingId -> trackingId to insight }
+                }
+                ?.toMap()
+                .orEmpty()
+
             countableDetections.forEach { detection ->
+                val recognition = detection.trackingId?.let(recognitionByTrackingId::get)
                 detection.trackingId?.let(countedTrackingIds::add)
                 applyWorkflowEvent(
                     WorkflowEvent.CargoPlaced(
-                        itemLabel = detection.label,
-                        colorName = "Unclassified",
-                        markerText = detection.category.takeIf { it != "Unknown" }.orEmpty(),
+                        itemLabel = recognition?.bestLabel?.ifBlank { detection.label } ?: detection.label,
+                        colorName = recognition?.dominantColor ?: "Unclassified",
+                        markerText = recognition?.markerText?.ifBlank {
+                            detection.category.takeIf { it != "Unknown" }.orEmpty()
+                        } ?: detection.category.takeIf { it != "Unknown" }.orEmpty(),
                         observedAt = System.currentTimeMillis(),
                     ),
                 )
@@ -226,6 +282,9 @@ class AppViewModel(
             _uiState.update {
                 it.copy(
                     liveDetections = it.liveDetections.map(::markCountedState),
+                    universalRecognitionSnapshot = it.universalRecognitionSnapshot?.copy(
+                        items = it.universalRecognitionSnapshot.items.map(::markCountedRecognitionState),
+                    ),
                     infoMessage = "${countableDetections.size} tracked object(s) counted from the live view.",
                     errorMessage = null,
                 )
@@ -357,6 +416,12 @@ class AppViewModel(
     private fun markCountedState(detection: LiveRecognition): LiveRecognition {
         return detection.copy(
             isCounted = detection.trackingId != null && countedTrackingIds.contains(detection.trackingId),
+        )
+    }
+
+    private fun markCountedRecognitionState(recognition: UniversalRecognition): UniversalRecognition {
+        return recognition.copy(
+            isCounted = recognition.trackingId != null && countedTrackingIds.contains(recognition.trackingId),
         )
     }
 }

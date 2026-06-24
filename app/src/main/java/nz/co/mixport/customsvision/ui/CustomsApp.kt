@@ -73,6 +73,7 @@ import nz.co.mixport.customsvision.BuildConfig
 import nz.co.mixport.customsvision.camera.InspectionCameraController
 import nz.co.mixport.customsvision.camera.LiveDetectionFrame
 import nz.co.mixport.customsvision.camera.LiveRecognition
+import nz.co.mixport.customsvision.camera.UniversalRecognition
 import nz.co.mixport.customsvision.data.CargoSummaryRecord
 import nz.co.mixport.customsvision.data.InspectionSessionRecord
 import nz.co.mixport.customsvision.data.PalletDetail
@@ -189,6 +190,9 @@ fun CustomsApp(viewModel: AppViewModel) {
                 onRecordingStarted = viewModel::onRecordingStarted,
                 onRecordingSaved = viewModel::onRecordingSaved,
                 onRecordingError = viewModel::onRecordingError,
+                onUniversalRecognitionStarted = viewModel::onUniversalRecognitionStarted,
+                onUniversalRecognitionCompleted = viewModel::onUniversalRecognitionCompleted,
+                onUniversalRecognitionError = viewModel::onUniversalRecognitionError,
             )
 
             AppDestination.HISTORY -> HistoryScreen(
@@ -218,7 +222,10 @@ private fun LiveScreen(
     onRecordingStarted: () -> Unit,
     onRecordingSaved: (String) -> Unit,
     onRecordingError: (String) -> Unit,
-    ) {
+    onUniversalRecognitionStarted: () -> Unit,
+    onUniversalRecognitionCompleted: (nz.co.mixport.customsvision.camera.UniversalRecognitionSnapshot) -> Unit,
+    onUniversalRecognitionError: (String) -> Unit,
+) {
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -254,6 +261,14 @@ private fun LiveScreen(
             LiveDetectionsCard(
                 uiState = uiState,
                 onCountVisibleDetections = onCountVisibleDetections,
+                onAnalyzeVisibleCargo = {
+                    onUniversalRecognitionStarted()
+                    cameraController.analyzeVisibleCargo(
+                        detections = uiState.liveDetections,
+                        onComplete = onUniversalRecognitionCompleted,
+                        onError = onUniversalRecognitionError,
+                    )
+                },
             )
         }
         item {
@@ -689,6 +704,7 @@ private fun LiveDetectionOverlay(detections: List<LiveRecognition>) {
 private fun LiveDetectionsCard(
     uiState: LiveInspectionUiState,
     onCountVisibleDetections: () -> Unit,
+    onAnalyzeVisibleCargo: () -> Unit,
 ) {
     ElevatedCard {
         Column(
@@ -697,24 +713,48 @@ private fun LiveDetectionsCard(
         ) {
             Text("Live Detections", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "This section reflects the live green-box tracker. Count only the visible cargo that has already landed on the pallet.",
+                text = "This section reflects the live green-box tracker. Use the auxiliary recognizer to add OCR text, generic object labels, and dominant color hints before counting.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = onCountVisibleDetections,
-                    enabled = uiState.activeSession != null &&
-                        uiState.liveDetections.any { !it.isPalletCandidate && !it.isCounted },
-                ) {
-                    Text("Count Visible Cargo")
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    Button(
+                        onClick = onCountVisibleDetections,
+                        enabled = uiState.activeSession != null &&
+                            uiState.liveDetections.any { !it.isPalletCandidate && !it.isCounted },
+                    ) {
+                        Text("Count Visible Cargo")
+                    }
                 }
-                FilledTonalButton(
-                    onClick = {},
-                    enabled = uiState.liveDetections.isNotEmpty(),
-                ) {
-                    Text("${uiState.liveDetections.size} tracked")
+                item {
+                    FilledTonalButton(
+                        onClick = onAnalyzeVisibleCargo,
+                        enabled = uiState.liveDetections.any { !it.isPalletCandidate } &&
+                            !uiState.isUniversalRecognitionRunning,
+                    ) {
+                        Text(
+                            if (uiState.isUniversalRecognitionRunning) {
+                                "Analyzing..."
+                            } else {
+                                "Analyze Visible Cargo"
+                            },
+                        )
+                    }
                 }
+                item {
+                    AssistChip(
+                        onClick = {},
+                        label = { Text("${uiState.liveDetections.size} tracked") },
+                    )
+                }
+            }
+            if (uiState.isUniversalRecognitionRunning) {
+                Text(
+                    text = "Capturing the current frame and extracting OCR, labels, and color hints.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             if (uiState.liveDetections.isEmpty()) {
                 Text(
@@ -724,6 +764,25 @@ private fun LiveDetectionsCard(
             } else {
                 uiState.liveDetections.take(6).forEach { detection ->
                     DetectionRow(detection = detection)
+                }
+            }
+            uiState.universalRecognitionSnapshot?.let { snapshot ->
+                HorizontalDivider()
+                Text("Visible Cargo Insights", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = "Snapshot ${formatTimestamp(snapshot.analyzedAt)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (snapshot.items.isEmpty()) {
+                    Text(
+                        text = "No auxiliary recognition results are available for the current frame.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    snapshot.items.forEach { recognition ->
+                        RecognitionRow(recognition = recognition)
+                    }
                 }
             }
         }
@@ -769,6 +828,67 @@ private fun DetectionRow(detection: LiveRecognition) {
             )
             Text(
                 text = "Confidence: ${formatConfidence(detection.confidence)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RecognitionRow(recognition: UniversalRecognition) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = if (recognition.isCounted) {
+                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f)
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+            },
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = recognition.displayTitle,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                AssistChip(
+                    onClick = {},
+                    label = {
+                        Text(if (recognition.isCounted) "Counted" else "Ready")
+                    },
+                )
+            }
+            if (recognition.sourceLabel != recognition.bestLabel) {
+                Text(
+                    text = "Tracked as: ${recognition.sourceLabel}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                text = "Color: ${recognition.dominantColor}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = "OCR / marker: ${recognition.markerText.ifBlank { "None detected" }}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = "Label hints: ${recognition.labelHints.ifEmpty { listOf("No hints") }.joinToString()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = "Confidence: ${formatConfidence(recognition.confidence)}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

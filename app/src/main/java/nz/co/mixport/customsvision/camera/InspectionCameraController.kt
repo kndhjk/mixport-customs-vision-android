@@ -2,7 +2,10 @@ package nz.co.mixport.customsvision.camera
 
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Build
 import android.provider.MediaStore
@@ -22,13 +25,26 @@ import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.label.ImageLabeler
+import com.google.mlkit.vision.label.ImageLabeling
+import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
 import com.google.mlkit.vision.objects.DetectedObject
 import com.google.mlkit.vision.objects.ObjectDetection
 import com.google.mlkit.vision.objects.ObjectDetector
 import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.TextRecognizer as VisionTextRecognizer
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import kotlin.math.PI
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.sin
 
 class InspectionCameraController(
     private val context: Context,
@@ -40,8 +56,13 @@ class InspectionCameraController(
     private var boundPreviewView: PreviewView? = null
     private var boundLifecycleOwner: LifecycleOwner? = null
     private var objectDetector: ObjectDetector? = null
+    private var imageLabeler: ImageLabeler? = null
+    private var latinTextRecognizer: VisionTextRecognizer? = null
+    private var chineseTextRecognizer: VisionTextRecognizer? = null
     private var isBinding = false
     private var isCameraBound = false
+    @Volatile
+    private var isUniversalRecognitionRunning = false
 
     fun bind(
         previewView: PreviewView,
@@ -118,6 +139,53 @@ class InspectionCameraController(
         )
     }
 
+    fun analyzeVisibleCargo(
+        detections: List<LiveRecognition>,
+        onComplete: (UniversalRecognitionSnapshot) -> Unit,
+        onError: (String) -> Unit,
+    ) {
+        if (isUniversalRecognitionRunning) {
+            onError("Visible cargo recognition is already running.")
+            return
+        }
+
+        val previewView = boundPreviewView
+        if (!isCameraBound || previewView == null) {
+            onError("Camera preview is not ready yet.")
+            return
+        }
+
+        val visibleCargo = detections.filterNot { it.isPalletCandidate }
+        if (visibleCargo.isEmpty()) {
+            onError("No visible cargo is ready for recognition.")
+            return
+        }
+
+        val snapshotBitmap = previewView.bitmap?.copy(Bitmap.Config.ARGB_8888, false)
+        if (snapshotBitmap == null || snapshotBitmap.width == 0 || snapshotBitmap.height == 0) {
+            snapshotBitmap?.recycle()
+            onError("Unable to capture the current preview frame.")
+            return
+        }
+
+        isUniversalRecognitionRunning = true
+        cameraExecutor.execute {
+            val result = runCatching {
+                analyzeBitmapSnapshot(snapshotBitmap, visibleCargo)
+            }
+            snapshotBitmap.recycle()
+            isUniversalRecognitionRunning = false
+
+            ContextCompat.getMainExecutor(context).execute {
+                result
+                    .onSuccess(onComplete)
+                    .onFailure { throwable ->
+                        onError(throwable.message ?: "Visible cargo recognition failed.")
+                    }
+            }
+        }
+    }
+
     fun startRecording(
         displayName: String,
         onSaved: (String) -> Unit,
@@ -177,6 +245,12 @@ class InspectionCameraController(
         videoCapture = null
         objectDetector?.close()
         objectDetector = null
+        imageLabeler?.close()
+        imageLabeler = null
+        latinTextRecognizer?.close()
+        latinTextRecognizer = null
+        chineseTextRecognizer?.close()
+        chineseTextRecognizer = null
         cameraExecutor.shutdown()
     }
 
@@ -188,6 +262,184 @@ class InspectionCameraController(
                 .enableClassification()
                 .build(),
         ).also { objectDetector = it }
+    }
+
+    private fun bundledImageLabeler(): ImageLabeler {
+        return imageLabeler ?: ImageLabeling.getClient(
+            ImageLabelerOptions.Builder()
+                .setConfidenceThreshold(0.35f)
+                .build(),
+        ).also { imageLabeler = it }
+    }
+
+    private fun latinRecognizer(): VisionTextRecognizer {
+        return latinTextRecognizer ?: TextRecognition.getClient(
+            TextRecognizerOptions.DEFAULT_OPTIONS,
+        ).also { latinTextRecognizer = it }
+    }
+
+    private fun chineseRecognizer(): VisionTextRecognizer {
+        return chineseTextRecognizer ?: TextRecognition.getClient(
+            ChineseTextRecognizerOptions.Builder().build(),
+        ).also { chineseTextRecognizer = it }
+    }
+
+    private fun analyzeBitmapSnapshot(
+        snapshotBitmap: Bitmap,
+        detections: List<LiveRecognition>,
+    ): UniversalRecognitionSnapshot {
+        val insights = detections.mapNotNull { detection ->
+            val croppedBitmap = cropDetection(snapshotBitmap, detection) ?: return@mapNotNull null
+            try {
+                analyzeCroppedBitmap(croppedBitmap, detection)
+            } finally {
+                croppedBitmap.recycle()
+            }
+        }
+
+        return UniversalRecognitionSnapshot(
+            analyzedAt = System.currentTimeMillis(),
+            items = insights,
+        )
+    }
+
+    private fun cropDetection(
+        snapshotBitmap: Bitmap,
+        detection: LiveRecognition,
+    ): Bitmap? {
+        val left = detection.left.toInt().coerceIn(0, snapshotBitmap.width - 1)
+        val top = detection.top.toInt().coerceIn(0, snapshotBitmap.height - 1)
+        val right = detection.right.toInt().coerceIn(left + 1, snapshotBitmap.width)
+        val bottom = detection.bottom.toInt().coerceIn(top + 1, snapshotBitmap.height)
+        val cropRect = Rect(left, top, right, bottom)
+        if (cropRect.width() < 24 || cropRect.height() < 24) {
+            return null
+        }
+        return Bitmap.createBitmap(
+            snapshotBitmap,
+            cropRect.left,
+            cropRect.top,
+            cropRect.width(),
+            cropRect.height(),
+        )
+    }
+
+    private fun analyzeCroppedBitmap(
+        croppedBitmap: Bitmap,
+        detection: LiveRecognition,
+    ): UniversalRecognition {
+        val image = InputImage.fromBitmap(croppedBitmap, 0)
+        val labels = Tasks.await(bundledImageLabeler().process(image))
+            .sortedByDescending { it.confidence }
+        val latinText = Tasks.await(latinRecognizer().process(image)).text.normalizeMarkerText()
+        val chineseText = Tasks.await(chineseRecognizer().process(image)).text.normalizeMarkerText()
+        val labelHints = labels
+            .map { it.text.toReadableLabel() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(3)
+        val bestLabel = labelHints.firstOrNull().orEmpty().ifBlank { detection.label }
+
+        return UniversalRecognition(
+            trackingId = detection.trackingId,
+            sourceLabel = detection.label,
+            bestLabel = bestLabel,
+            confidence = labels.firstOrNull()?.confidence ?: detection.confidence,
+            dominantColor = detectDominantColor(croppedBitmap),
+            markerText = mergeMarkerText(latinText, chineseText),
+            labelHints = labelHints,
+        )
+    }
+
+    private fun mergeMarkerText(vararg textValues: String): String {
+        return textValues
+            .flatMap { text ->
+                text.split('|')
+                    .map(String::trim)
+                    .filter(String::isNotBlank)
+            }
+            .distinct()
+            .take(3)
+            .joinToString(" | ")
+    }
+
+    private fun String.normalizeMarkerText(): String {
+        return lineSequence()
+            .map { line -> line.trim().replace("\\s+".toRegex(), " ") }
+            .filter { line ->
+                line.isNotBlank() &&
+                    (line.length > 1 || line.any(Char::isDigit))
+            }
+            .distinct()
+            .take(3)
+            .joinToString(" | ")
+    }
+
+    private fun detectDominantColor(bitmap: Bitmap): String {
+        val hsv = FloatArray(3)
+        val stepX = max(1, bitmap.width / 18)
+        val stepY = max(1, bitmap.height / 18)
+        var sampleCount = 0
+        var hueVectorX = 0.0
+        var hueVectorY = 0.0
+        var saturationTotal = 0f
+        var valueTotal = 0f
+
+        for (y in 0 until bitmap.height step stepY) {
+            for (x in 0 until bitmap.width step stepX) {
+                Color.colorToHSV(bitmap.getPixel(x, y), hsv)
+                val hueRadians = hsv[0] / 180f * PI
+                hueVectorX += cos(hueRadians) * hsv[1]
+                hueVectorY += sin(hueRadians) * hsv[1]
+                saturationTotal += hsv[1]
+                valueTotal += hsv[2]
+                sampleCount++
+            }
+        }
+
+        if (sampleCount == 0) {
+            return "Unclassified"
+        }
+
+        val averageSaturation = saturationTotal / sampleCount
+        val averageValue = valueTotal / sampleCount
+
+        if (averageValue < 0.18f) {
+            return "Black"
+        }
+        if (averageSaturation < 0.12f) {
+            return when {
+                averageValue > 0.84f -> "White"
+                averageValue > 0.42f -> "Gray"
+                else -> "Black"
+            }
+        }
+
+        var hueDegrees = Math.toDegrees(atan2(hueVectorY, hueVectorX))
+        if (hueDegrees < 0.0) {
+            hueDegrees += 360.0
+        }
+
+        return when {
+            hueDegrees < 16.0 || hueDegrees >= 345.0 -> "Red"
+            hueDegrees < 36.0 -> if (averageValue < 0.72f) "Brown" else "Orange"
+            hueDegrees < 58.0 -> "Orange"
+            hueDegrees < 78.0 -> "Yellow"
+            hueDegrees < 165.0 -> "Green"
+            hueDegrees < 250.0 -> "Blue"
+            hueDegrees < 320.0 -> "Purple"
+            else -> "Red"
+        }
+    }
+
+    private fun String.toReadableLabel(): String {
+        return split('_', ' ')
+            .filter { it.isNotBlank() }
+            .joinToString(" ") { token ->
+                token.lowercase().replaceFirstChar { first ->
+                    if (first.isLowerCase()) first.titlecase() else first.toString()
+                }
+            }
     }
 
     private class LiveObjectAnalyzer(
