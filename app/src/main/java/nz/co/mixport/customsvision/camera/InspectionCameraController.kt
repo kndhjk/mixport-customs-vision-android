@@ -338,17 +338,50 @@ class InspectionCameraController(
             .filter { it.isNotBlank() }
             .distinct()
             .take(3)
-        val bestLabel = labelHints.firstOrNull().orEmpty().ifBlank { detection.label }
+        val dominantColor = detectDominantColor(croppedBitmap)
+        val isPalletLike = isLikelyWoodPallet(
+            detection = detection,
+            dominantColor = dominantColor,
+            labelHints = labelHints,
+        )
+        val bestLabel = when {
+            isPalletLike -> "Wood pallet base"
+            else -> labelHints.firstOrNull().orEmpty().ifBlank { detection.label }
+        }
 
         return UniversalRecognition(
             trackingId = detection.trackingId,
             sourceLabel = detection.label,
             bestLabel = bestLabel,
             confidence = labels.firstOrNull()?.confidence ?: detection.confidence,
-            dominantColor = detectDominantColor(croppedBitmap),
+            dominantColor = dominantColor,
             markerText = mergeMarkerText(latinText, chineseText),
             labelHints = labelHints,
+            isPalletLike = isPalletLike,
         )
+    }
+
+    private fun isLikelyWoodPallet(
+        detection: LiveRecognition,
+        dominantColor: String,
+        labelHints: List<String>,
+    ): Boolean {
+        if (detection.isPalletCandidate) {
+            return true
+        }
+
+        val aspectRatio = detection.width / max(detection.height, 1f)
+        val isFlatDeck = aspectRatio > 1.55f && detection.height < detection.width * 0.58f
+        val hasWoodTone = dominantColor in setOf("Brown", "Orange", "Yellow")
+        val labelSuggestsPallet = labelHints.any { hint ->
+            hint.contains("Pallet", ignoreCase = true) ||
+                hint.contains("Wood", ignoreCase = true) ||
+                hint.contains("Lumber", ignoreCase = true) ||
+                hint.contains("Furniture", ignoreCase = true) ||
+                hint.contains("Table", ignoreCase = true)
+        }
+
+        return isFlatDeck && hasWoodTone && (labelSuggestsPallet || aspectRatio > 2.0f)
     }
 
     private fun mergeMarkerText(vararg textValues: String): String {
@@ -588,13 +621,19 @@ class InspectionCameraController(
         ): Boolean {
             val widthRatio = rect.width() / previewWidth
             val heightRatio = rect.height() / previewHeight
-            val sitsNearBottom = rect.bottom > previewHeight * 0.62f
-            val isWide = rect.width() > rect.height() * 1.15f
+            val aspectRatio = rect.width() / max(rect.height(), 1f)
+            val sitsNearBottom = rect.bottom > previewHeight * 0.64f
+            val isFlatDeck = aspectRatio > 1.45f && heightRatio in 0.10f..0.36f
+            val spansUsefulWidth = widthRatio > 0.26f
             val categoryHintsPallet = category.contains("Home", ignoreCase = true) ||
-                category.contains("Place", ignoreCase = true)
+                category.contains("Place", ignoreCase = true) ||
+                category.contains("Furniture", ignoreCase = true) ||
+                category.contains("Table", ignoreCase = true) ||
+                category.contains("Wood", ignoreCase = true)
+            val strongBaseFallback = widthRatio > 0.42f && heightRatio < 0.28f && aspectRatio > 1.75f
 
-            return sitsNearBottom && isWide && widthRatio > 0.28f && heightRatio < 0.42f &&
-                (categoryHintsPallet || widthRatio > 0.38f)
+            return sitsNearBottom && spansUsefulWidth && isFlatDeck &&
+                (categoryHintsPallet || strongBaseFallback)
         }
 
         private fun String.toReadableLabel(): String {

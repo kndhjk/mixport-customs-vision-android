@@ -713,7 +713,7 @@ private fun LiveDetectionsCard(
         ) {
             Text("Live Detections", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "This section reflects the live green-box tracker. Use the auxiliary recognizer to add OCR text, generic object labels, and dominant color hints before counting.",
+                text = "This section reflects the live green-box tracker. The pallet rule is now tuned toward low, wide wooden shipping pallets like your reference photo, then the auxiliary recognizer adds OCR, labels, and color hints before counting.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -861,7 +861,13 @@ private fun RecognitionRow(recognition: UniversalRecognition) {
                 AssistChip(
                     onClick = {},
                     label = {
-                        Text(if (recognition.isCounted) "Counted" else "Ready")
+                        Text(
+                            when {
+                                recognition.isPalletLike -> "Pallet base"
+                                recognition.isCounted -> "Counted"
+                                else -> "Ready"
+                            },
+                        )
                     },
                 )
             }
@@ -877,6 +883,13 @@ private fun RecognitionRow(recognition: UniversalRecognition) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (recognition.isPalletLike) {
+                Text(
+                    text = "This object matches the wooden pallet profile and will be excluded from cargo counting.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             Text(
                 text = "OCR / marker: ${recognition.markerText.ifBlank { "None detected" }}",
                 style = MaterialTheme.typography.bodySmall,

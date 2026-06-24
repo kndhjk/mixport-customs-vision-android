@@ -229,8 +229,17 @@ class AppViewModel(
 
         viewModelScope.launch {
             var latestSnapshot = _uiState.value
+            val palletRecognitionTrackingIds = latestSnapshot.universalRecognitionSnapshot?.items
+                ?.mapNotNull { recognition ->
+                    recognition.trackingId?.takeIf { recognition.isPalletLike }
+                }
+                ?.toSet()
+                .orEmpty()
             if (latestSnapshot.workflowState.activePalletSequence == null) {
-                val hasVisiblePallet = latestSnapshot.liveDetections.any { it.isPalletCandidate }
+                val hasVisiblePallet = latestSnapshot.liveDetections.any { detection ->
+                    detection.isPalletCandidate ||
+                        detection.trackingId != null && palletRecognitionTrackingIds.contains(detection.trackingId)
+                }
                 if (!hasVisiblePallet) {
                     _uiState.update {
                         it.copy(errorMessage = "No pallet candidate is visible yet. Aim the camera at the pallet first.")
@@ -243,6 +252,7 @@ class AppViewModel(
 
             val countableDetections = latestSnapshot.liveDetections.filter { detection ->
                 !detection.isPalletCandidate &&
+                    (detection.trackingId == null || !palletRecognitionTrackingIds.contains(detection.trackingId)) &&
                     detection.trackingId != null &&
                     !countedTrackingIds.contains(detection.trackingId)
             }

@@ -46,6 +46,7 @@ data class UniversalRecognition(
     val dominantColor: String,
     val markerText: String,
     val labelHints: List<String>,
+    val isPalletLike: Boolean = false,
     val isCounted: Boolean = false,
 ) {
     val displayTitle: String
