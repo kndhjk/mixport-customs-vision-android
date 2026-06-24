@@ -49,6 +49,17 @@ import kotlin.math.sin
 class InspectionCameraController(
     private val context: Context,
 ) {
+    private data class PalletReferenceProfile(
+        val targetAspectRatio: Float = 2.1f,
+        val aspectTolerance: Float = 0.9f,
+        val targetWidthRatio: Float = 0.44f,
+        val widthTolerance: Float = 0.22f,
+        val targetHeightRatio: Float = 0.22f,
+        val heightTolerance: Float = 0.12f,
+        val bottomAnchorRatio: Float = 0.72f,
+    )
+
+    private val palletReferenceProfile = PalletReferenceProfile()
     private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var videoCapture: VideoCapture<Recorder>? = null
     private var activeRecording: Recording? = null
@@ -333,17 +344,20 @@ class InspectionCameraController(
             .sortedByDescending { it.confidence }
         val latinText = Tasks.await(latinRecognizer().process(image)).text.normalizeMarkerText()
         val chineseText = Tasks.await(chineseRecognizer().process(image)).text.normalizeMarkerText()
+        val mergedMarkerText = mergeMarkerText(latinText, chineseText)
         val labelHints = labels
             .map { it.text.toReadableLabel() }
             .filter { it.isNotBlank() }
             .distinct()
             .take(3)
         val dominantColor = detectDominantColor(croppedBitmap)
-        val isPalletLike = isLikelyWoodPallet(
+        val palletScore = scoreWoodPalletProfile(
             detection = detection,
             dominantColor = dominantColor,
             labelHints = labelHints,
+            markerText = mergedMarkerText,
         )
+        val isPalletLike = palletScore >= 0.7f
         val bestLabel = when {
             isPalletLike -> "Wood pallet base"
             else -> labelHints.firstOrNull().orEmpty().ifBlank { detection.label }
@@ -355,23 +369,20 @@ class InspectionCameraController(
             bestLabel = bestLabel,
             confidence = labels.firstOrNull()?.confidence ?: detection.confidence,
             dominantColor = dominantColor,
-            markerText = mergeMarkerText(latinText, chineseText),
+            markerText = mergedMarkerText,
             labelHints = labelHints,
             isPalletLike = isPalletLike,
+            palletScore = palletScore,
         )
     }
 
-    private fun isLikelyWoodPallet(
+    private fun scoreWoodPalletProfile(
         detection: LiveRecognition,
         dominantColor: String,
         labelHints: List<String>,
-    ): Boolean {
-        if (detection.isPalletCandidate) {
-            return true
-        }
-
+        markerText: String,
+    ): Float {
         val aspectRatio = detection.width / max(detection.height, 1f)
-        val isFlatDeck = aspectRatio > 1.55f && detection.height < detection.width * 0.58f
         val hasWoodTone = dominantColor in setOf("Brown", "Orange", "Yellow")
         val labelSuggestsPallet = labelHints.any { hint ->
             hint.contains("Pallet", ignoreCase = true) ||
@@ -380,8 +391,32 @@ class InspectionCameraController(
                 hint.contains("Furniture", ignoreCase = true) ||
                 hint.contains("Table", ignoreCase = true)
         }
+        val hasLittleText = markerText.isBlank() || markerText.length <= 4
+        val aspectMatch = normalizedProfileMatch(
+            value = aspectRatio,
+            target = palletReferenceProfile.targetAspectRatio,
+            tolerance = palletReferenceProfile.aspectTolerance,
+        )
+        val liveSignal = detection.palletScore ?: 0f
+        var score = 0f
+        score += aspectMatch * 0.28f
+        score += liveSignal * 0.28f
+        if (hasWoodTone) score += 0.22f
+        if (labelSuggestsPallet) score += 0.14f
+        if (hasLittleText) score += 0.08f
+        return score.coerceIn(0f, 1f)
+    }
 
-        return isFlatDeck && hasWoodTone && (labelSuggestsPallet || aspectRatio > 2.0f)
+    private fun normalizedProfileMatch(
+        value: Float,
+        target: Float,
+        tolerance: Float,
+    ): Float {
+        if (tolerance <= 0f) {
+            return 0f
+        }
+        val delta = kotlin.math.abs(value - target)
+        return (1f - delta / tolerance).coerceIn(0f, 1f)
     }
 
     private fun mergeMarkerText(vararg textValues: String): String {
@@ -475,7 +510,7 @@ class InspectionCameraController(
             }
     }
 
-    private class LiveObjectAnalyzer(
+    private inner class LiveObjectAnalyzer(
         private val previewView: PreviewView,
         private val objectDetector: ObjectDetector,
         private val onFrameHeartbeat: (Long) -> Unit,
@@ -594,7 +629,8 @@ class InspectionCameraController(
 
             val primaryLabel = labels.maxByOrNull { it.confidence }
             val category = primaryLabel?.text?.toReadableLabel() ?: "Unknown"
-            val isPalletCandidate = isLikelyPallet(rect, previewWidth, previewHeight, category)
+            val palletScore = scoreLivePalletProfile(rect, previewWidth, previewHeight, category)
+            val isPalletCandidate = palletScore >= 0.66f
 
             return LiveRecognition(
                 trackingId = trackingId,
@@ -610,30 +646,57 @@ class InspectionCameraController(
                 right = rect.right,
                 bottom = rect.bottom,
                 isPalletCandidate = isPalletCandidate,
+                palletScore = palletScore,
             )
         }
 
-        private fun isLikelyPallet(
+        private fun scoreLivePalletProfile(
             rect: RectF,
             previewWidth: Float,
             previewHeight: Float,
             category: String,
-        ): Boolean {
+        ): Float {
             val widthRatio = rect.width() / previewWidth
             val heightRatio = rect.height() / previewHeight
             val aspectRatio = rect.width() / max(rect.height(), 1f)
-            val sitsNearBottom = rect.bottom > previewHeight * 0.64f
-            val isFlatDeck = aspectRatio > 1.45f && heightRatio in 0.10f..0.36f
-            val spansUsefulWidth = widthRatio > 0.26f
+            val bottomRatio = rect.bottom / previewHeight
+            val sitsNearBottom = bottomRatio > palletReferenceProfile.bottomAnchorRatio - 0.08f
             val categoryHintsPallet = category.contains("Home", ignoreCase = true) ||
                 category.contains("Place", ignoreCase = true) ||
                 category.contains("Furniture", ignoreCase = true) ||
                 category.contains("Table", ignoreCase = true) ||
                 category.contains("Wood", ignoreCase = true)
-            val strongBaseFallback = widthRatio > 0.42f && heightRatio < 0.28f && aspectRatio > 1.75f
+            val aspectMatch = normalizedProfileMatch(
+                value = aspectRatio,
+                target = palletReferenceProfile.targetAspectRatio,
+                tolerance = palletReferenceProfile.aspectTolerance,
+            )
+            val widthMatch = normalizedProfileMatch(
+                value = widthRatio,
+                target = palletReferenceProfile.targetWidthRatio,
+                tolerance = palletReferenceProfile.widthTolerance,
+            )
+            val heightMatch = normalizedProfileMatch(
+                value = heightRatio,
+                target = palletReferenceProfile.targetHeightRatio,
+                tolerance = palletReferenceProfile.heightTolerance,
+            )
+            val bottomMatch = normalizedProfileMatch(
+                value = bottomRatio,
+                target = palletReferenceProfile.bottomAnchorRatio,
+                tolerance = 0.18f,
+            )
 
-            return sitsNearBottom && spansUsefulWidth && isFlatDeck &&
-                (categoryHintsPallet || strongBaseFallback)
+            var score = 0f
+            score += aspectMatch * 0.34f
+            score += widthMatch * 0.20f
+            score += heightMatch * 0.20f
+            score += bottomMatch * 0.16f
+            if (categoryHintsPallet) score += 0.10f
+            if (sitsNearBottom && aspectRatio > 1.75f && heightRatio < 0.30f) {
+                score += 0.08f
+            }
+            return score.coerceIn(0f, 1f)
         }
 
         private fun String.toReadableLabel(): String {

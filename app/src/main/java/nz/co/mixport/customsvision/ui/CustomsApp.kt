@@ -831,6 +831,17 @@ private fun DetectionRow(detection: LiveRecognition) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            detection.palletScore?.let { score ->
+                Text(
+                    text = "Pallet profile: ${formatPercent(score)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (detection.isPalletCandidate) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
         }
     }
 }
@@ -905,6 +916,17 @@ private fun RecognitionRow(recognition: UniversalRecognition) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            recognition.palletScore?.let { score ->
+                Text(
+                    text = "Pallet profile: ${formatPercent(score)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (recognition.isPalletLike) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
         }
     }
 }
@@ -1276,5 +1298,9 @@ private fun formatConfidence(confidence: Float?): String {
     } else {
         "${(confidence * 100).roundToInt()}%"
     }
+}
+
+private fun formatPercent(value: Float): String {
+    return "${(value.coerceIn(0f, 1f) * 100).roundToInt()}%"
 }
 

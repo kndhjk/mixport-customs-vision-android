@@ -15,6 +15,7 @@ data class LiveRecognition(
     val right: Float,
     val bottom: Float,
     val isPalletCandidate: Boolean,
+    val palletScore: Float? = null,
     val isCounted: Boolean = false,
 ) {
     val width: Float
@@ -47,6 +48,7 @@ data class UniversalRecognition(
     val markerText: String,
     val labelHints: List<String>,
     val isPalletLike: Boolean = false,
+    val palletScore: Float? = null,
     val isCounted: Boolean = false,
 ) {
     val displayTitle: String
