@@ -1,0 +1,62 @@
+name: Android APK
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build APKs
+        run: ./gradlew assembleDebug assembleRelease
+
+      - name: Prepare artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_NAME="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
+            VERSION_NAME="main-${GITHUB_RUN_NUMBER}"
+          fi
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/mixport-customs-vision-${VERSION_NAME}-debug.apk"
+          cp app/build/outputs/apk/release/app-release.apk "dist/mixport-customs-vision-${VERSION_NAME}-release.apk"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mixport-customs-vision-apks
+          path: dist/*.apk
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.apk
+          generate_release_notes: true
+          body: |
+            Pilot Android APKs for Mixport Customs Vision.
+
+            Notes:
+            - `release.apk` is debug-signed for internal pilot deployment.
+            - `debug.apk` is included as a fallback installable build.

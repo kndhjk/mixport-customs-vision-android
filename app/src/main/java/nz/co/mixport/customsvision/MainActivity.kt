@@ -15,16 +15,18 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val repository = (application as CustomsApplication).repository
+        val app = application as CustomsApplication
 
         setContent {
             MixportCustomsTheme {
                 val viewModel: AppViewModel = viewModel(
-                    factory = AppViewModelFactory(repository),
+                    factory = AppViewModelFactory(
+                        repository = app.repository,
+                        preferencesRepository = app.preferencesRepository,
+                    ),
                 )
                 CustomsApp(viewModel = viewModel)
             }
         }
     }
 }
-

@@ -141,6 +141,64 @@ class CustomsDatabaseHelper(context: Context) :
         }
     }
 
+    fun lookupBarcode(barcode: String): BarcodeLookupResult? {
+        val normalized = barcode.trim().uppercase()
+        if (normalized.isBlank()) {
+            return null
+        }
+
+        val sessionCursor = readableDatabase.query(
+            "inspection_session",
+            arrayOf("container_code", "status"),
+            "UPPER(container_code) = ?",
+            arrayOf(normalized),
+            null,
+            null,
+            "started_at DESC",
+            "1",
+        )
+        sessionCursor.use { cursor ->
+            if (cursor.moveToFirst()) {
+                return BarcodeLookupResult(
+                    found = true,
+                    databaseRecord = cursor.getString(cursor.getColumnIndexOrThrow("container_code")),
+                    status = cursor.getString(cursor.getColumnIndexOrThrow("status")),
+                    source = "SESSION",
+                )
+            }
+        }
+
+        val itemCursor = readableDatabase.rawQuery(
+            """
+            SELECT pis.marker_text, pis.item_label, s.container_code
+            FROM pallet_item_summary pis
+            INNER JOIN pallet p ON p.id = pis.pallet_id
+            INNER JOIN inspection_session s ON s.id = p.session_id
+            WHERE UPPER(pis.marker_text) = ?
+                OR UPPER(pis.marker_text) LIKE ?
+                OR UPPER(pis.item_label) = ?
+            ORDER BY p.started_at DESC, pis.id DESC
+            LIMIT 1
+            """.trimIndent(),
+            arrayOf(normalized, "%$normalized%", normalized),
+        )
+        itemCursor.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val markerText = cursor.getString(cursor.getColumnIndexOrThrow("marker_text"))
+                val itemLabel = cursor.getString(cursor.getColumnIndexOrThrow("item_label"))
+                val containerCode = cursor.getString(cursor.getColumnIndexOrThrow("container_code"))
+                return BarcodeLookupResult(
+                    found = true,
+                    databaseRecord = markerText.ifBlank { itemLabel },
+                    status = "$itemLabel · $containerCode",
+                    source = "PALLET_ITEM",
+                )
+            }
+        }
+
+        return null
+    }
+
     fun updateSessionStatus(
         sessionId: Long,
         status: String,
@@ -416,4 +474,3 @@ class CustomsDatabaseHelper(context: Context) :
         private const val DATABASE_VERSION = 1
     }
 }
-

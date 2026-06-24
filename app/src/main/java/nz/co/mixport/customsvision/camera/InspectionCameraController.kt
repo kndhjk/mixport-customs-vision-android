@@ -49,6 +49,11 @@ import kotlin.math.sin
 class InspectionCameraController(
     private val context: Context,
 ) {
+    private data class CargoVocabularyEntry(
+        val label: String,
+        val keywords: Set<String>,
+    )
+
     private data class PalletReferenceProfile(
         val targetAspectRatio: Float = 2.1f,
         val aspectTolerance: Float = 0.9f,
@@ -60,6 +65,56 @@ class InspectionCameraController(
     )
 
     private val palletReferenceProfile = PalletReferenceProfile()
+    private val cargoVocabulary = listOf(
+        CargoVocabularyEntry(
+            label = "Electric kettle",
+            keywords = setOf("kettle", "teapot", "water boiler", "boiler", "coffee pot"),
+        ),
+        CargoVocabularyEntry(
+            label = "Cup / mug",
+            keywords = setOf("cup", "mug", "tumbler", "glass", "teacup"),
+        ),
+        CargoVocabularyEntry(
+            label = "Bowl",
+            keywords = setOf("bowl", "dish", "basin"),
+        ),
+        CargoVocabularyEntry(
+            label = "Chopsticks / cutlery",
+            keywords = setOf("chopstick", "chopsticks", "cutlery", "utensil", "utensils", "sticks"),
+        ),
+        CargoVocabularyEntry(
+            label = "Pen / marker",
+            keywords = setOf("pen", "marker", "pencil", "stylus"),
+        ),
+        CargoVocabularyEntry(
+            label = "Computer",
+            keywords = setOf("computer", "desktop", "monitor", "display", "screen"),
+        ),
+        CargoVocabularyEntry(
+            label = "Laptop",
+            keywords = setOf("laptop", "notebook computer", "macbook"),
+        ),
+        CargoVocabularyEntry(
+            label = "Notebook / book",
+            keywords = setOf("notebook", "book", "exercise book", "journal"),
+        ),
+        CargoVocabularyEntry(
+            label = "Keyboard",
+            keywords = setOf("keyboard", "keypad"),
+        ),
+        CargoVocabularyEntry(
+            label = "Carton / box",
+            keywords = setOf("carton", "box", "package", "parcel", "crate"),
+        ),
+        CargoVocabularyEntry(
+            label = "Bottle",
+            keywords = setOf("bottle", "thermos", "flask"),
+        ),
+        CargoVocabularyEntry(
+            label = "Plate",
+            keywords = setOf("plate", "tray"),
+        ),
+    )
     private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var videoCapture: VideoCapture<Recorder>? = null
     private var activeRecording: Recording? = null
@@ -358,8 +413,14 @@ class InspectionCameraController(
             markerText = mergedMarkerText,
         )
         val isPalletLike = palletScore >= 0.7f
+        val mappedCargoLabel = resolveCargoLabel(
+            labelHints = labelHints,
+            markerText = mergedMarkerText,
+            sourceLabel = detection.label,
+        )
         val bestLabel = when {
             isPalletLike -> "Wood pallet base"
+            mappedCargoLabel != null -> mappedCargoLabel
             else -> labelHints.firstOrNull().orEmpty().ifBlank { detection.label }
         }
 
@@ -405,6 +466,24 @@ class InspectionCameraController(
         if (labelSuggestsPallet) score += 0.14f
         if (hasLittleText) score += 0.08f
         return score.coerceIn(0f, 1f)
+    }
+
+    private fun resolveCargoLabel(
+        labelHints: List<String>,
+        markerText: String,
+        sourceLabel: String,
+    ): String? {
+        val normalizedCorpus = buildList {
+            add(sourceLabel)
+            add(markerText)
+            addAll(labelHints)
+        }
+            .joinToString(" ")
+            .lowercase()
+
+        return cargoVocabulary.firstOrNull { entry ->
+            entry.keywords.any { keyword -> normalizedCorpus.contains(keyword) }
+        }?.label
     }
 
     private fun normalizedProfileMatch(

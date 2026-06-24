@@ -81,6 +81,10 @@ class PilotRepository(
             databaseHelper.listEvents(sessionId, limit)
         }
 
+    suspend fun lookupBarcode(barcode: String): BarcodeLookupResult? = withContext(Dispatchers.IO) {
+        databaseHelper.lookupBarcode(barcode)
+    }
+
     suspend fun updateContainerFlag(sessionId: Long, hasRemainingCargo: Boolean) =
         withContext(Dispatchers.IO) {
             val session = databaseHelper.getSession(sessionId) ?: return@withContext
@@ -133,4 +137,3 @@ class PilotRepository(
         )
     }
 }
-

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
@@ -98,6 +99,7 @@ fun CustomsApp(viewModel: AppViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val cameraController = remember { InspectionCameraController(context) }
+    val language = uiState.appLanguage
 
     DisposableEffect(Unit) {
         onDispose {
@@ -132,11 +134,31 @@ fun CustomsApp(viewModel: AppViewModel) {
                 ),
                 title = {
                     Column {
-                        Text("Mixport Customs Vision")
+                        Text(language.pick("Mixport Customs Vision", "Mixport 智能海关"))
                         Text(
-                            text = "Cargo tracking, pallet counting, and evidence capture",
+                            text = language.pick(
+                                "Cargo tracking, pallet counting, evidence capture, and scanner workflows",
+                                "货物追踪、托盘计数、证据留存与扫码作业",
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.82f),
+                        )
+                    }
+                },
+                actions = {
+                    Button(
+                        onClick = viewModel::toggleLanguage,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.14f),
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                        ),
+                    ) {
+                        Text(
+                            if (language == nz.co.mixport.customsvision.data.AppLanguage.ENGLISH) {
+                                "中文"
+                            } else {
+                                "EN"
+                            },
                         )
                     }
                 },
@@ -155,7 +177,18 @@ fun CustomsApp(viewModel: AppViewModel) {
                     selected = uiState.selectedDestination == AppDestination.LIVE,
                     onClick = { viewModel.selectDestination(AppDestination.LIVE) },
                     icon = { Icon(Icons.Outlined.CameraAlt, contentDescription = null) },
-                    label = { Text("Live") },
+                    label = { Text(language.pick("Live", "识别")) },
+                )
+                NavigationBarItem(
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                    ),
+                    selected = uiState.selectedDestination == AppDestination.SCANNER,
+                    onClick = { viewModel.selectDestination(AppDestination.SCANNER) },
+                    icon = { Icon(Icons.Outlined.StopCircle, contentDescription = null) },
+                    label = { Text(language.pick("Scanner", "扫码")) },
                 )
                 NavigationBarItem(
                     colors = NavigationBarItemDefaults.colors(
@@ -166,7 +199,7 @@ fun CustomsApp(viewModel: AppViewModel) {
                     selected = uiState.selectedDestination == AppDestination.HISTORY,
                     onClick = { viewModel.selectDestination(AppDestination.HISTORY) },
                     icon = { Icon(Icons.Outlined.Folder, contentDescription = null) },
-                    label = { Text("History") },
+                    label = { Text(language.pick("History", "历史")) },
                 )
             }
         },
@@ -195,8 +228,20 @@ fun CustomsApp(viewModel: AppViewModel) {
                 onUniversalRecognitionError = viewModel::onUniversalRecognitionError,
             )
 
+            AppDestination.SCANNER -> ScannerScreen(
+                modifier = Modifier.padding(padding),
+                uiState = uiState,
+                onScannerInputChanged = viewModel::updateScannerInput,
+                onScannerVerify = viewModel::verifyScannerBarcode,
+                onScannerAutoVerifyChanged = viewModel::setScannerAutoVerifyEnabled,
+                onScannerSoundChanged = viewModel::setScannerSoundEnabled,
+                onScannerHistoryCleared = viewModel::clearScannerHistory,
+                onScannerOnboardingDismissed = viewModel::dismissScannerOnboarding,
+            )
+
             AppDestination.HISTORY -> HistoryScreen(
                 modifier = Modifier.padding(padding),
+                language = language,
                 sessions = uiState.history,
             )
         }
@@ -234,6 +279,7 @@ private fun LiveScreen(
         item {
             if (uiState.infoMessage != null || uiState.errorMessage != null) {
                 MessageCard(
+                    language = uiState.appLanguage,
                     infoMessage = uiState.infoMessage,
                     errorMessage = uiState.errorMessage,
                     onDismiss = onDismissMessage,
@@ -284,31 +330,37 @@ private fun LiveScreen(
         }
         item {
             ManualControlsCard(
+                language = uiState.appLanguage,
                 enabled = uiState.activeSession != null,
                 onWorkflowEvent = onWorkflowEvent,
             )
         }
         item {
             CurrentPalletCard(
+                language = uiState.appLanguage,
                 phase = uiState.workflowState.phase,
                 currentPalletSequence = uiState.workflowState.activePalletSequence,
                 items = uiState.currentPalletItems,
             )
         }
         item {
-            SealedPalletsCard(pallets = uiState.sealedPallets)
+            SealedPalletsCard(
+                language = uiState.appLanguage,
+                pallets = uiState.sealedPallets,
+            )
         }
         item {
-            EventFeedCard(uiState = uiState)
+            EventFeedCard(uiState = uiState, language = uiState.appLanguage)
         }
         item {
-            EndpointCard()
+            EndpointCard(language = uiState.appLanguage)
         }
     }
 }
 
 @Composable
 private fun PilotHeroCard(uiState: LiveInspectionUiState) {
+    val language = uiState.appLanguage
     Surface(
         shape = RoundedCornerShape(24.dp),
         shadowElevation = 4.dp,
@@ -326,12 +378,15 @@ private fun PilotHeroCard(uiState: LiveInspectionUiState) {
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text(
-                    text = "Mixport pilot deck",
+                    text = language.pick("Mixport pilot deck", "Mixport 试点作业台"),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f),
                 )
                 Text(
-                    text = "Unload cargo with live camera tracking, pallet event capture, and shipment evidence on one screen.",
+                    text = language.pick(
+                        "Unload cargo with live camera tracking, pallet event capture, scanner support, and shipment evidence on one screen.",
+                        "在一个页面里完成实时货物追踪、托盘事件记录、扫码支持和作业证据留存。",
+                    ),
                     style = MaterialTheme.typography.headlineMedium,
                     color = MaterialTheme.colorScheme.onPrimary,
                 )
@@ -341,7 +396,11 @@ private fun PilotHeroCard(uiState: LiveInspectionUiState) {
                             onClick = {},
                             label = {
                                 Text(
-                                    if (uiState.cameraPermissionGranted) "Camera ready" else "Camera access needed",
+                                    if (uiState.cameraPermissionGranted) {
+                                        language.pick("Camera ready", "相机已就绪")
+                                    } else {
+                                        language.pick("Camera access needed", "需要相机权限")
+                                    },
                                 )
                             },
                         )
@@ -351,7 +410,7 @@ private fun PilotHeroCard(uiState: LiveInspectionUiState) {
                             onClick = {},
                             label = {
                                 Text(
-                                    uiState.activeSession?.containerCode ?: "No live session",
+                                    uiState.activeSession?.containerCode ?: language.pick("No live session", "暂无作业"),
                                 )
                             },
                         )
@@ -360,7 +419,7 @@ private fun PilotHeroCard(uiState: LiveInspectionUiState) {
                         AssistChip(
                             onClick = {},
                             label = {
-                                Text("Tracks ${uiState.liveDetections.size}")
+                                Text(language.pick("Tracks ${uiState.liveDetections.size}", "跟踪 ${uiState.liveDetections.size}"))
                             },
                         )
                     }
@@ -380,14 +439,18 @@ private fun SessionSetupCard(
     onStartSession: () -> Unit,
     onCloseSession: () -> Unit,
 ) {
+    val language = uiState.appLanguage
     ElevatedCard {
         Column(
             modifier = Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Session Setup", style = MaterialTheme.typography.titleMedium)
+            Text(language.pick("Session Setup", "作业设置"), style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "Use the same orange-white workflow language as the Mixport cargo pages: start a lane, keep the camera rolling, and archive pallet evidence at the end.",
+                text = language.pick(
+                    "Use the same orange-white workflow language as the Mixport cargo pages: start a lane, keep the camera rolling, and archive pallet evidence at the end.",
+                    "沿用 Mixport 货运页面的橙白作业语言：开始一票作业、持续录像，并在结束时归档托盘证据。",
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -395,46 +458,49 @@ private fun SessionSetupCard(
                 value = uiState.draft.containerCode,
                 onValueChange = onContainerCodeChanged,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Container Code") },
+                label = { Text(language.pick("Container Code", "柜号")) },
                 singleLine = true,
             )
             OutlinedTextField(
                 value = uiState.draft.vesselName,
                 onValueChange = onVesselNameChanged,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Vessel / Lane") },
+                label = { Text(language.pick("Vessel / Lane", "船名 / 航线")) },
                 singleLine = true,
             )
             OutlinedTextField(
                 value = uiState.draft.operatorName,
                 onValueChange = onOperatorNameChanged,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Operator") },
+                label = { Text(language.pick("Operator", "操作员")) },
                 singleLine = true,
             )
             OutlinedTextField(
                 value = uiState.draft.notes,
                 onValueChange = onNotesChanged,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Notes") },
+                label = { Text(language.pick("Notes", "备注")) },
             )
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(
                     onClick = onStartSession,
                     enabled = uiState.activeSession == null,
                 ) {
-                    Text("Start Session")
+                    Text(language.pick("Start Session", "开始作业"))
                 }
                 OutlinedButton(
                     onClick = onCloseSession,
                     enabled = uiState.activeSession != null,
                 ) {
-                    Text("Close Session")
+                    Text(language.pick("Close Session", "关闭作业"))
                 }
             }
             uiState.activeSession?.let { session ->
                 Text(
-                    text = "Active session: ${session.containerCode} | ${session.operatorName}",
+                    text = language.pick(
+                        "Active session: ${session.containerCode} | ${session.operatorName}",
+                        "当前作业：${session.containerCode} | ${session.operatorName}",
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -445,17 +511,18 @@ private fun SessionSetupCard(
 
 @Composable
 private fun StatusCard(uiState: LiveInspectionUiState) {
+    val language = uiState.appLanguage
     ElevatedCard {
         Column(
             modifier = Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Workflow Status", style = MaterialTheme.typography.titleMedium)
+            Text(language.pick("Workflow Status", "流程状态"), style = MaterialTheme.typography.titleMedium)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 item {
                     AssistChip(
                         onClick = {},
-                        label = { Text("Phase ${uiState.workflowState.phase.name}") },
+                        label = { Text(language.pick("Phase ${uiState.workflowState.phase.name}", "阶段 ${uiState.workflowState.phase.name}")) },
                     )
                 }
                 item {
@@ -464,9 +531,9 @@ private fun StatusCard(uiState: LiveInspectionUiState) {
                         label = {
                             Text(
                                 if (uiState.workflowState.containerHasRemainingCargo) {
-                                    "Cargo still in container"
+                                    language.pick("Cargo still in container", "柜内仍有货物")
                                 } else {
-                                    "Container looks empty"
+                                    language.pick("Container looks empty", "货柜看起来已空")
                                 },
                             )
                         },
@@ -475,22 +542,28 @@ private fun StatusCard(uiState: LiveInspectionUiState) {
                 item {
                     AssistChip(
                         onClick = {},
-                        label = { Text("Tracks ${uiState.liveDetections.size}") },
+                        label = { Text(language.pick("Tracks ${uiState.liveDetections.size}", "跟踪 ${uiState.liveDetections.size}")) },
                     )
                 }
             }
             val heartbeatText = uiState.lastFrameHeartbeatAt?.let {
-                "Vision heartbeat: ${formatTimestamp(it)}"
-            } ?: "Vision heartbeat: waiting"
+                language.pick(
+                    "Vision heartbeat: ${formatTimestamp(it)}",
+                    "视觉心跳：${formatTimestamp(it)}",
+                )
+            } ?: language.pick("Vision heartbeat: waiting", "视觉心跳：等待中")
             Text(text = heartbeatText, style = MaterialTheme.typography.bodyMedium)
             Text(
-                text = "Green boxes come from live ML Kit object tracking. The pallet wrap step is still manual.",
+                text = language.pick(
+                    "Green boxes come from live ML Kit object tracking. The pallet wrap step is still manual.",
+                    "绿色框来自实时 ML Kit 目标追踪。托盘缠膜步骤目前仍为手动确认。",
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             uiState.recordingUri?.let {
                 Text(
-                    text = "Last video: $it",
+                    text = language.pick("Last video: $it", "最近视频：$it"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
@@ -513,6 +586,7 @@ private fun CameraCard(
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val activeSession = uiState.activeSession
+    val language = uiState.appLanguage
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
 
     DisposableEffect(previewView, lifecycleOwner, uiState.cameraPermissionGranted) {
@@ -536,15 +610,21 @@ private fun CameraCard(
             modifier = Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Live Camera", style = MaterialTheme.typography.titleMedium)
+            Text(language.pick("Live Camera", "实时相机"), style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "Primary live zone for the customs pilot. This panel should open first and mirror the orange brand language from the Mixport cargo portal.",
+                text = language.pick(
+                    "Primary live zone for the customs pilot. This panel should open first and mirror the orange brand language from the Mixport cargo portal.",
+                    "这是智能海关试点的主识别区。它会优先打开，并延续 Mixport 货运门户的橙色品牌语言。",
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (!uiState.cameraPermissionGranted) {
                 Text(
-                    text = "Camera permission is required to preview and track cargo.",
+                    text = language.pick(
+                        "Camera permission is required to preview and track cargo.",
+                        "预览和追踪货物前，需要先授予相机权限。",
+                    ),
                     color = MaterialTheme.colorScheme.error,
                 )
             } else {
@@ -568,7 +648,10 @@ private fun CameraCard(
                             previewView = view
                         },
                     )
-                    LiveDetectionOverlay(detections = uiState.liveDetections)
+                    LiveDetectionOverlay(
+                        detections = uiState.liveDetections,
+                        language = language,
+                    )
                     Surface(
                         modifier = Modifier
                             .align(Alignment.TopStart)
@@ -578,9 +661,9 @@ private fun CameraCard(
                     ) {
                         Text(
                             text = if (uiState.lastFrameHeartbeatAt == null) {
-                                "Connecting camera..."
+                                language.pick("Connecting camera...", "正在连接相机...")
                             } else {
-                                "Live feed active"
+                                language.pick("Live feed active", "实时画面已激活")
                             },
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                             color = Color.White,
@@ -597,9 +680,9 @@ private fun CameraCard(
                         ) {
                             Text(
                                 text = if (uiState.lastFrameHeartbeatAt == null) {
-                                    "Point the camera at the cargo area"
+                                    language.pick("Point the camera at the cargo area", "请将镜头对准货物区域")
                                 } else {
-                                    "No tracked object yet"
+                                    language.pick("No tracked object yet", "暂未跟踪到对象")
                                 },
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                 color = Color.White,
@@ -623,7 +706,7 @@ private fun CameraCard(
                             )
                             onRecordingStarted()
                         } else {
-                            onRecordingError("Start a session before recording.")
+                            onRecordingError(language.pick("Start a session before recording.", "开始作业后才能录像。"))
                         }
                     },
                     enabled = uiState.cameraPermissionGranted,
@@ -637,13 +720,25 @@ private fun CameraCard(
                         contentDescription = null,
                     )
                     Spacer(Modifier.size(8.dp))
-                    Text(if (uiState.isRecording) "Stop Recording" else "Start Recording")
+                    Text(
+                        if (uiState.isRecording) {
+                            language.pick("Stop Recording", "停止录像")
+                        } else {
+                            language.pick("Start Recording", "开始录像")
+                        },
+                    )
                 }
                 FilledTonalButton(
                     onClick = {},
                     enabled = activeSession != null,
                 ) {
-                    Text(if (activeSession == null) "No session" else "Tracking live")
+                    Text(
+                        if (activeSession == null) {
+                            language.pick("No session", "暂无作业")
+                        } else {
+                            language.pick("Tracking live", "实时追踪中")
+                        },
+                    )
                 }
             }
         }
@@ -651,7 +746,10 @@ private fun CameraCard(
 }
 
 @Composable
-private fun LiveDetectionOverlay(detections: List<LiveRecognition>) {
+private fun LiveDetectionOverlay(
+    detections: List<LiveRecognition>,
+    language: nz.co.mixport.customsvision.data.AppLanguage,
+) {
     val density = LocalDensity.current
     Box(modifier = Modifier.fillMaxSize()) {
         detections.forEach { detection ->
@@ -689,7 +787,7 @@ private fun LiveDetectionOverlay(detections: List<LiveRecognition>) {
                 shape = RoundedCornerShape(999.dp),
             ) {
                 Text(
-                    text = detection.overlayTitle,
+                    text = localizedDetectionTitle(language, detection),
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     color = Color.White,
                     style = MaterialTheme.typography.bodySmall,
@@ -706,14 +804,21 @@ private fun LiveDetectionsCard(
     onCountVisibleDetections: () -> Unit,
     onAnalyzeVisibleCargo: () -> Unit,
 ) {
+    val language = uiState.appLanguage
     ElevatedCard {
         Column(
             modifier = Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Live Detections", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "This section reflects the live green-box tracker. The pallet rule is now tuned toward low, wide wooden shipping pallets like your reference photo, then the auxiliary recognizer adds OCR, labels, and color hints before counting.",
+                language.pick("Live Detections", "实时识别"),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = language.pick(
+                    "This section reflects the live green-box tracker. The pallet rule is now tuned toward low, wide wooden shipping pallets like your reference photo, then the auxiliary recognizer adds OCR, labels, and color hints before counting.",
+                    "这里展示实时绿色框追踪结果。托盘规则已针对你提供的低矮宽木托盘样式做过加强，之后再结合 OCR、标签和颜色线索完成辅助识别与计数。",
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -724,7 +829,7 @@ private fun LiveDetectionsCard(
                         enabled = uiState.activeSession != null &&
                             uiState.liveDetections.any { !it.isPalletCandidate && !it.isCounted },
                     ) {
-                        Text("Count Visible Cargo")
+                        Text(language.pick("Count Visible Cargo", "计数当前货物"))
                     }
                 }
                 item {
@@ -735,9 +840,9 @@ private fun LiveDetectionsCard(
                     ) {
                         Text(
                             if (uiState.isUniversalRecognitionRunning) {
-                                "Analyzing..."
+                                language.pick("Analyzing...", "分析中...")
                             } else {
-                                "Analyze Visible Cargo"
+                                language.pick("Analyze Visible Cargo", "分析当前画面")
                             },
                         )
                     }
@@ -745,43 +850,71 @@ private fun LiveDetectionsCard(
                 item {
                     AssistChip(
                         onClick = {},
-                        label = { Text("${uiState.liveDetections.size} tracked") },
+                        label = {
+                            Text(
+                                language.pick(
+                                    "${uiState.liveDetections.size} tracked",
+                                    "已追踪 ${uiState.liveDetections.size} 个",
+                                ),
+                            )
+                        },
                     )
                 }
             }
             if (uiState.isUniversalRecognitionRunning) {
                 Text(
-                    text = "Capturing the current frame and extracting OCR, labels, and color hints.",
+                    text = language.pick(
+                        "Capturing the current frame and extracting OCR, labels, and color hints.",
+                        "正在截取当前画面并提取 OCR、标签和颜色线索。",
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             if (uiState.liveDetections.isEmpty()) {
                 Text(
-                    text = "Aim the camera at a pallet or cargo. The first launch can take a moment while the detector model warms up.",
+                    text = language.pick(
+                        "Aim the camera at a pallet or cargo. The first launch can take a moment while the detector model warms up.",
+                        "将相机对准托盘或货物。首次启动时模型预热可能需要几秒。",
+                    ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
                 uiState.liveDetections.take(6).forEach { detection ->
-                    DetectionRow(detection = detection)
+                    DetectionRow(
+                        language = language,
+                        detection = detection,
+                    )
                 }
             }
             uiState.universalRecognitionSnapshot?.let { snapshot ->
                 HorizontalDivider()
-                Text("Visible Cargo Insights", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    text = "Snapshot ${formatTimestamp(snapshot.analyzedAt)}",
+                    language.pick("Visible Cargo Insights", "货物识别详情"),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    text = language.pick(
+                        "Snapshot ${formatTimestamp(snapshot.analyzedAt)}",
+                        "快照时间 ${formatTimestamp(snapshot.analyzedAt)}",
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (snapshot.items.isEmpty()) {
                     Text(
-                        text = "No auxiliary recognition results are available for the current frame.",
+                        text = language.pick(
+                            "No auxiliary recognition results are available for the current frame.",
+                            "当前画面暂无辅助识别结果。",
+                        ),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
                     snapshot.items.forEach { recognition ->
-                        RecognitionRow(recognition = recognition)
+                        RecognitionRow(
+                            language = language,
+                            recognition = recognition,
+                        )
                     }
                 }
             }
@@ -790,7 +923,10 @@ private fun LiveDetectionsCard(
 }
 
 @Composable
-private fun DetectionRow(detection: LiveRecognition) {
+private fun DetectionRow(
+    language: nz.co.mixport.customsvision.data.AppLanguage,
+    detection: LiveRecognition,
+) {
     Card(
         colors = CardDefaults.cardColors(
             containerColor = BrandTint,
@@ -805,7 +941,7 @@ private fun DetectionRow(detection: LiveRecognition) {
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    text = detection.overlayTitle,
+                    text = localizedDetectionTitle(language, detection),
                     fontWeight = FontWeight.SemiBold,
                 )
                 AssistChip(
@@ -813,27 +949,36 @@ private fun DetectionRow(detection: LiveRecognition) {
                     label = {
                         Text(
                             when {
-                                detection.isPalletCandidate -> "Pallet"
-                                detection.isCounted -> "Counted"
-                                else -> "Visible"
+                                detection.isPalletCandidate -> language.pick("Pallet", "托盘")
+                                detection.isCounted -> language.pick("Counted", "已计数")
+                                else -> language.pick("Visible", "可见")
                             },
                         )
                     },
                 )
             }
             Text(
-                text = "Category: ${detection.category}",
+                text = language.pick(
+                    "Category: ${detection.category}",
+                    "类别：${detection.category}",
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = "Confidence: ${formatConfidence(detection.confidence)}",
+                text = language.pick(
+                    "Confidence: ${formatConfidence(detection.confidence)}",
+                    "置信度：${formatConfidence(detection.confidence)}",
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             detection.palletScore?.let { score ->
                 Text(
-                    text = "Pallet profile: ${formatPercent(score)}",
+                    text = language.pick(
+                        "Pallet profile: ${formatPercent(score)}",
+                        "托盘特征匹配：${formatPercent(score)}",
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = if (detection.isPalletCandidate) {
                         MaterialTheme.colorScheme.primary
@@ -847,7 +992,10 @@ private fun DetectionRow(detection: LiveRecognition) {
 }
 
 @Composable
-private fun RecognitionRow(recognition: UniversalRecognition) {
+private fun RecognitionRow(
+    language: nz.co.mixport.customsvision.data.AppLanguage,
+    recognition: UniversalRecognition,
+) {
     Card(
         colors = CardDefaults.cardColors(
             containerColor = if (recognition.isCounted) {
@@ -866,7 +1014,7 @@ private fun RecognitionRow(recognition: UniversalRecognition) {
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    text = recognition.displayTitle,
+                    text = localizedRecognitionTitle(language, recognition),
                     fontWeight = FontWeight.SemiBold,
                 )
                 AssistChip(
@@ -874,9 +1022,9 @@ private fun RecognitionRow(recognition: UniversalRecognition) {
                     label = {
                         Text(
                             when {
-                                recognition.isPalletLike -> "Pallet base"
-                                recognition.isCounted -> "Counted"
-                                else -> "Ready"
+                                recognition.isPalletLike -> language.pick("Pallet base", "托盘底座")
+                                recognition.isCounted -> language.pick("Counted", "已计数")
+                                else -> language.pick("Ready", "待确认")
                             },
                         )
                     },
@@ -884,41 +1032,62 @@ private fun RecognitionRow(recognition: UniversalRecognition) {
             }
             if (recognition.sourceLabel != recognition.bestLabel) {
                 Text(
-                    text = "Tracked as: ${recognition.sourceLabel}",
+                    text = language.pick(
+                        "Tracked as: ${localizedCargoLabel(language, recognition.sourceLabel)}",
+                        "原始跟踪标签：${localizedCargoLabel(language, recognition.sourceLabel)}",
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Text(
-                text = "Color: ${recognition.dominantColor}",
+                text = language.pick(
+                    "Color: ${recognition.dominantColor}",
+                    "颜色：${recognition.dominantColor}",
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (recognition.isPalletLike) {
                 Text(
-                    text = "This object matches the wooden pallet profile and will be excluded from cargo counting.",
+                    text = language.pick(
+                        "This object matches the wooden pallet profile and will be excluded from cargo counting.",
+                        "该目标与木托盘特征匹配，会从货物计数中排除。",
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
             Text(
-                text = "OCR / marker: ${recognition.markerText.ifBlank { "None detected" }}",
+                text = language.pick(
+                    "OCR / marker: ${recognition.markerText.ifBlank { "None detected" }}",
+                    "OCR / 标记：${recognition.markerText.ifBlank { "未识别" }}",
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = "Label hints: ${recognition.labelHints.ifEmpty { listOf("No hints") }.joinToString()}",
+                text = language.pick(
+                    "Label hints: ${recognition.labelHints.ifEmpty { listOf("No hints") }.joinToString()}",
+                    "标签线索：${recognition.labelHints.ifEmpty { listOf("无") }.joinToString()}",
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = "Confidence: ${formatConfidence(recognition.confidence)}",
+                text = language.pick(
+                    "Confidence: ${formatConfidence(recognition.confidence)}",
+                    "置信度：${formatConfidence(recognition.confidence)}",
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             recognition.palletScore?.let { score ->
                 Text(
-                    text = "Pallet profile: ${formatPercent(score)}",
+                    text = language.pick(
+                        "Pallet profile: ${formatPercent(score)}",
+                        "托盘特征匹配：${formatPercent(score)}",
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = if (recognition.isPalletLike) {
                         MaterialTheme.colorScheme.primary
@@ -933,6 +1102,7 @@ private fun RecognitionRow(recognition: UniversalRecognition) {
 
 @Composable
 private fun ManualControlsCard(
+    language: nz.co.mixport.customsvision.data.AppLanguage,
     enabled: Boolean,
     onWorkflowEvent: (WorkflowEvent) -> Unit,
 ) {
@@ -941,9 +1111,15 @@ private fun ManualControlsCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Manual Controls", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "Keep these controls as fallback while pallet wrap detection and custom cargo classification are still being trained.",
+                language.pick("Manual Controls", "人工控制"),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = language.pick(
+                    "Keep these controls as fallback while pallet wrap detection and custom cargo classification are still being trained.",
+                    "在托盘缠膜识别和自定义货物分类继续训练前，这组按钮作为人工兜底流程保留。",
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -954,7 +1130,7 @@ private fun ManualControlsCard(
                     },
                     enabled = enabled,
                 ) {
-                    Text("Open Pallet")
+                    Text(language.pick("Open Pallet", "开启托盘"))
                 }
                 OutlinedButton(
                     onClick = {
@@ -967,7 +1143,7 @@ private fun ManualControlsCard(
                     },
                     enabled = enabled,
                 ) {
-                    Text("Container Has Cargo")
+                    Text(language.pick("Container Has Cargo", "货柜还有货"))
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -975,16 +1151,16 @@ private fun ManualControlsCard(
                     onClick = {
                         onWorkflowEvent(
                             WorkflowEvent.CargoPlaced(
-                                itemLabel = "Manual cargo",
-                                colorName = "Unclassified",
-                                markerText = "Manual",
+                                itemLabel = language.pick("Manual cargo", "人工货物"),
+                                colorName = language.pick("Unclassified", "未分类"),
+                                markerText = language.pick("Manual", "人工"),
                                 observedAt = System.currentTimeMillis(),
                             ),
                         )
                     },
                     enabled = enabled,
                 ) {
-                    Text("Add Manual Cargo")
+                    Text(language.pick("Add Manual Cargo", "添加人工货物"))
                 }
                 Button(
                     onClick = {
@@ -992,7 +1168,7 @@ private fun ManualControlsCard(
                     },
                     enabled = enabled,
                 ) {
-                    Text("Wrap Pallet")
+                    Text(language.pick("Wrap Pallet", "封膜托盘"))
                 }
             }
             OutlinedButton(
@@ -1006,7 +1182,7 @@ private fun ManualControlsCard(
                 },
                 enabled = enabled,
             ) {
-                Text("Container Empty")
+                Text(language.pick("Container Empty", "货柜已空"))
             }
         }
     }
@@ -1014,6 +1190,7 @@ private fun ManualControlsCard(
 
 @Composable
 private fun CurrentPalletCard(
+    language: nz.co.mixport.customsvision.data.AppLanguage,
     phase: SessionPhase,
     currentPalletSequence: Int?,
     items: List<CargoSummaryRecord>,
@@ -1023,26 +1200,40 @@ private fun CurrentPalletCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Current Pallet", style = MaterialTheme.typography.titleMedium)
+            Text(
+                language.pick("Current Pallet", "当前托盘"),
+                style = MaterialTheme.typography.titleMedium,
+            )
             if (currentPalletSequence == null) {
                 Text(
                     text = when (phase) {
-                        SessionPhase.READY_TO_COMPLETE -> "No active pallet. Container can be closed."
-                        SessionPhase.CLOSED -> "Session closed."
-                        else -> "Waiting for the next pallet to enter the camera zone."
+                        SessionPhase.READY_TO_COMPLETE -> language.pick(
+                            "No active pallet. Container can be closed.",
+                            "当前没有活动托盘，可以结束本次货柜作业。",
+                        )
+                        SessionPhase.CLOSED -> language.pick("Session closed.", "本次作业已关闭。")
+                        else -> language.pick(
+                            "Waiting for the next pallet to enter the camera zone.",
+                            "等待下一个托盘进入相机区域。",
+                        )
                     },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                Text("Pallet #$currentPalletSequence is active.")
+                Text(
+                    language.pick(
+                        "Pallet #$currentPalletSequence is active.",
+                        "托盘 #$currentPalletSequence 正在装货。",
+                    ),
+                )
                 if (items.isEmpty()) {
                     Text(
-                        text = "No items counted yet.",
+                        text = language.pick("No items counted yet.", "还没有计数到货物。"),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
                     items.forEach { item ->
-                        SummaryRow(item = item)
+                        SummaryRow(language = language, item = item)
                     }
                 }
             }
@@ -1051,16 +1242,22 @@ private fun CurrentPalletCard(
 }
 
 @Composable
-private fun SummaryRow(item: CargoSummaryRecord) {
+private fun SummaryRow(
+    language: nz.co.mixport.customsvision.data.AppLanguage,
+    item: CargoSummaryRecord,
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column {
-            Text(item.itemLabel, fontWeight = FontWeight.SemiBold)
             Text(
-                "${item.colorName} | ${item.markerText.ifBlank { "No OCR tag" }}",
+                localizedCargoLabel(language, item.itemLabel),
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                "${item.colorName} | ${item.markerText.ifBlank { language.pick("No OCR tag", "无 OCR 标记") }}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1070,16 +1267,22 @@ private fun SummaryRow(item: CargoSummaryRecord) {
 }
 
 @Composable
-private fun SealedPalletsCard(pallets: List<PalletDetail>) {
+private fun SealedPalletsCard(
+    language: nz.co.mixport.customsvision.data.AppLanguage,
+    pallets: List<PalletDetail>,
+) {
     ElevatedCard {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Archived Pallets", style = MaterialTheme.typography.titleMedium)
+            Text(
+                language.pick("Archived Pallets", "已归档托盘"),
+                style = MaterialTheme.typography.titleMedium,
+            )
             if (pallets.isEmpty()) {
                 Text(
-                    text = "No sealed pallets yet.",
+                    text = language.pick("No sealed pallets yet.", "还没有完成封膜的托盘。"),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
@@ -1090,17 +1293,21 @@ private fun SealedPalletsCard(pallets: List<PalletDetail>) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Text(
-                                text = "Pallet #${detail.pallet.sequenceNumber}",
+                                text = language.pick(
+                                    "Pallet #${detail.pallet.sequenceNumber}",
+                                    "托盘 #${detail.pallet.sequenceNumber}",
+                                ),
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Text(
-                                text = detail.pallet.closedAt?.let(::formatTimestamp) ?: "Open",
+                                text = detail.pallet.closedAt?.let(::formatTimestamp)
+                                    ?: language.pick("Open", "开启中"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         detail.items.forEach { item ->
-                            SummaryRow(item = item)
+                            SummaryRow(language = language, item = item)
                         }
                         HorizontalDivider()
                     }
@@ -1111,16 +1318,25 @@ private fun SealedPalletsCard(pallets: List<PalletDetail>) {
 }
 
 @Composable
-private fun EventFeedCard(uiState: LiveInspectionUiState) {
+private fun EventFeedCard(
+    uiState: LiveInspectionUiState,
+    language: nz.co.mixport.customsvision.data.AppLanguage,
+) {
     ElevatedCard {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Event Feed", style = MaterialTheme.typography.titleMedium)
+            Text(
+                language.pick("Event Feed", "事件流"),
+                style = MaterialTheme.typography.titleMedium,
+            )
             if (uiState.recentEvents.isEmpty()) {
                 Text(
-                    text = "Event logs will appear after the first session starts.",
+                    text = language.pick(
+                        "Event logs will appear after the first session starts.",
+                        "开始第一单作业后，这里会显示事件日志。",
+                    ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
@@ -1134,7 +1350,10 @@ private fun EventFeedCard(uiState: LiveInspectionUiState) {
                             modifier = Modifier.padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            Text(event.eventType, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                localizedEventType(language, event.eventType),
+                                fontWeight = FontWeight.SemiBold,
+                            )
                             Text(event.message)
                             Text(
                                 formatTimestamp(event.createdAt),
@@ -1150,19 +1369,28 @@ private fun EventFeedCard(uiState: LiveInspectionUiState) {
 }
 
 @Composable
-private fun EndpointCard() {
+private fun EndpointCard(language: nz.co.mixport.customsvision.data.AppLanguage) {
     ElevatedCard {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("Pilot Sync Profile", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "This Android app is prepared to sync through the same Mixport server stack, but it does not embed database credentials.",
+                language.pick("Pilot Sync Profile", "试点同步配置"),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = language.pick(
+                    "This Android app is prepared to sync through the same Mixport server stack, but it does not embed database credentials.",
+                    "这个 Android 应用已按 Mixport 同一套服务器体系预留同步能力，但不会把数据库凭据直接写进客户端。",
+                ),
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
-                text = "Default API base URL: ${BuildConfig.DEFAULT_API_BASE_URL}",
+                text = language.pick(
+                    "Default API base URL: ${BuildConfig.DEFAULT_API_BASE_URL}",
+                    "默认 API 地址：${BuildConfig.DEFAULT_API_BASE_URL}",
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1173,6 +1401,7 @@ private fun EndpointCard() {
 @Composable
 private fun HistoryScreen(
     modifier: Modifier = Modifier,
+    language: nz.co.mixport.customsvision.data.AppLanguage,
     sessions: List<InspectionSessionRecord>,
 ) {
     LazyColumn(
@@ -1182,7 +1411,7 @@ private fun HistoryScreen(
     ) {
         item {
             Text(
-                text = "Session History",
+                text = language.pick("Session History", "作业历史"),
                 style = MaterialTheme.typography.headlineSmall,
             )
         }
@@ -1190,9 +1419,12 @@ private fun HistoryScreen(
             item {
                 Card {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("No sessions recorded yet.")
+                        Text(language.pick("No sessions recorded yet.", "还没有历史作业记录。"))
                         Text(
-                            "Start a pilot run on the Live tab to populate local history.",
+                            language.pick(
+                                "Start a pilot run on the Live tab to populate local history.",
+                                "在识别页开始一次试点作业后，这里会自动生成本地历史。",
+                            ),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -1200,14 +1432,17 @@ private fun HistoryScreen(
             }
         } else {
             items(sessions, key = { it.id }) { session ->
-                SessionHistoryCard(session = session)
+                SessionHistoryCard(language = language, session = session)
             }
         }
     }
 }
 
 @Composable
-private fun SessionHistoryCard(session: InspectionSessionRecord) {
+private fun SessionHistoryCard(
+    language: nz.co.mixport.customsvision.data.AppLanguage,
+    session: InspectionSessionRecord,
+) {
     ElevatedCard {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -1222,23 +1457,45 @@ private fun SessionHistoryCard(session: InspectionSessionRecord) {
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
-                AssistChip(onClick = {}, label = { Text(session.status) })
+                AssistChip(
+                    onClick = {},
+                    label = { Text(localizedStatus(language, session.status)) },
+                )
             }
-            Text("Operator: ${session.operatorName}")
-            Text("Vessel / lane: ${session.vesselName.ifBlank { "Not set" }}")
             Text(
-                "Started: ${formatTimestamp(session.startedAt)}",
+                language.pick(
+                    "Operator: ${session.operatorName}",
+                    "操作员：${session.operatorName}",
+                ),
+            )
+            Text(
+                language.pick(
+                    "Vessel / lane: ${session.vesselName.ifBlank { "Not set" }}",
+                    "船名 / 航线：${session.vesselName.ifBlank { "未填写" }}",
+                ),
+            )
+            Text(
+                language.pick(
+                    "Started: ${formatTimestamp(session.startedAt)}",
+                    "开始时间：${formatTimestamp(session.startedAt)}",
+                ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             session.endedAt?.let {
                 Text(
-                    "Ended: ${formatTimestamp(it)}",
+                    language.pick(
+                        "Ended: ${formatTimestamp(it)}",
+                        "结束时间：${formatTimestamp(it)}",
+                    ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             if (session.recordingUri != null) {
                 Text(
-                    "Video: ${session.recordingUri}",
+                    language.pick(
+                        "Video: ${session.recordingUri}",
+                        "视频：${session.recordingUri}",
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -1250,6 +1507,7 @@ private fun SessionHistoryCard(session: InspectionSessionRecord) {
 
 @Composable
 private fun MessageCard(
+    language: nz.co.mixport.customsvision.data.AppLanguage,
     infoMessage: String?,
     errorMessage: String?,
     onDismiss: () -> Unit,
@@ -1279,13 +1537,55 @@ private fun MessageCard(
                 }
             }
             OutlinedButton(onClick = onDismiss) {
-                Text("Dismiss")
+                Text(language.pick("Dismiss", "关闭"))
             }
         }
     }
 }
 
-private fun formatTimestamp(epochMillis: Long): String {
+private fun localizedDetectionTitle(
+    language: nz.co.mixport.customsvision.data.AppLanguage,
+    detection: LiveRecognition,
+): String {
+    return buildString {
+        append(localizedCargoLabel(language, detection.label))
+        detection.trackingId?.let {
+            append(" #")
+            append(it)
+        }
+    }
+}
+
+private fun localizedRecognitionTitle(
+    language: nz.co.mixport.customsvision.data.AppLanguage,
+    recognition: UniversalRecognition,
+): String {
+    return buildString {
+        append(localizedCargoLabel(language, recognition.bestLabel))
+        recognition.trackingId?.let {
+            append(" #")
+            append(it)
+        }
+    }
+}
+
+private fun localizedEventType(
+    language: nz.co.mixport.customsvision.data.AppLanguage,
+    eventType: String,
+): String {
+    return when (eventType.uppercase()) {
+        "SESSION_STARTED" -> language.pick("Session started", "作业开始")
+        "SESSION_FINISHED" -> language.pick("Session finished", "作业结束")
+        "PALLET_DETECTED" -> language.pick("Pallet detected", "识别到托盘")
+        "PALLET_IMPLICITLY_OPENED" -> language.pick("Pallet opened", "托盘已开启")
+        "CARGO_COUNTED" -> language.pick("Cargo counted", "货物已计数")
+        "PALLET_WRAPPED" -> language.pick("Pallet wrapped", "托盘已封膜")
+        "CONTAINER_STATUS" -> language.pick("Container status", "货柜状态")
+        else -> eventType
+    }
+}
+
+internal fun formatTimestamp(epochMillis: Long): String {
     val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
     return Instant.ofEpochMilli(epochMillis)
         .atZone(ZoneId.systemDefault())

@@ -1,5 +1,24 @@
 package nz.co.mixport.customsvision.data
 
+enum class AppLanguage(val code: String) {
+    ENGLISH("en"),
+    CHINESE("zh"),
+    ;
+
+    companion object {
+        fun fromCode(code: String?): AppLanguage {
+            return entries.firstOrNull { it.code.equals(code, ignoreCase = true) } ?: ENGLISH
+        }
+    }
+}
+
+enum class ScannerMatchStatus {
+    MATCHED,
+    MISMATCH,
+    ERROR,
+    WAITING,
+}
+
 data class SessionDraft(
     val containerCode: String = "",
     val vesselName: String = "",
@@ -55,3 +74,18 @@ data class PalletDetail(
     val items: List<CargoSummaryRecord>,
 )
 
+data class ScannerRecord(
+    val scannedBarcode: String,
+    val databaseRecord: String,
+    val matchStatus: ScannerMatchStatus,
+    val status: String,
+    val source: String,
+    val scannedAt: Long,
+)
+
+data class BarcodeLookupResult(
+    val found: Boolean,
+    val databaseRecord: String,
+    val status: String,
+    val source: String,
+)
