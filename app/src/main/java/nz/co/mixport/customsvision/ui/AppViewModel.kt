@@ -8,9 +8,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import nz.co.mixport.customsvision.camera.InspectionTuningProfile
 import nz.co.mixport.customsvision.camera.LiveDetectionFrame
 import nz.co.mixport.customsvision.camera.LiveRecognition
 import nz.co.mixport.customsvision.camera.LiveTrackCountEngine
+import nz.co.mixport.customsvision.camera.MobileVisionProfile
 import nz.co.mixport.customsvision.camera.UniversalRecognitionSnapshot
 import nz.co.mixport.customsvision.data.AppLanguage
 import nz.co.mixport.customsvision.data.AppPreferencesRepository
@@ -18,6 +20,7 @@ import nz.co.mixport.customsvision.data.BarcodeLookupResult
 import nz.co.mixport.customsvision.data.CargoSummaryRecord
 import nz.co.mixport.customsvision.data.EventLogRecord
 import nz.co.mixport.customsvision.data.InspectionSessionRecord
+import nz.co.mixport.customsvision.data.LoadedInspectionTuning
 import nz.co.mixport.customsvision.data.PalletDetail
 import nz.co.mixport.customsvision.data.PilotRepository
 import nz.co.mixport.customsvision.data.ScannerMatchStatus
@@ -58,6 +61,9 @@ data class ScannerUiState(
 
 data class LiveInspectionUiState(
     val appLanguage: AppLanguage = AppLanguage.ENGLISH,
+    val inspectionTuning: InspectionTuningProfile = InspectionTuningProfile.default(),
+    val mobileVisionProfile: MobileVisionProfile? = null,
+    val inspectionTuningSource: String = "",
     val selectedDestination: AppDestination = AppDestination.LIVE,
     val draft: SessionDraft = SessionDraft(),
     val activeSession: InspectionSessionRecord? = null,
@@ -82,11 +88,15 @@ data class LiveInspectionUiState(
 class AppViewModel(
     private val repository: PilotRepository,
     private val preferencesRepository: AppPreferencesRepository,
+    private val loadedInspectionTuning: LoadedInspectionTuning,
 ) : ViewModel() {
     private val reducer = PalletWorkflowReducer()
     private val _uiState = MutableStateFlow(
         LiveInspectionUiState(
             appLanguage = preferencesRepository.getLanguage(),
+            inspectionTuning = loadedInspectionTuning.profile,
+            mobileVisionProfile = loadedInspectionTuning.mobileVisionProfile,
+            inspectionTuningSource = loadedInspectionTuning.sourceDescription,
             scanner = ScannerUiState(
                 isAutoVerifyEnabled = preferencesRepository.isScannerAutoVerifyEnabled(),
                 isSoundEnabled = preferencesRepository.isScannerSoundEnabled(),
@@ -96,7 +106,7 @@ class AppViewModel(
         ),
     )
     val uiState: StateFlow<LiveInspectionUiState> = _uiState.asStateFlow()
-    private val trackCountEngine = LiveTrackCountEngine()
+    private val trackCountEngine = LiveTrackCountEngine(loadedInspectionTuning.profile)
 
     init {
         refreshHistory()
@@ -833,7 +843,7 @@ class AppViewModel(
             return true
         }
         return isMeaningfulCargoLabel(detection.category) &&
-            (detection.confidence ?: 0f) >= 0.72f
+            (detection.confidence ?: 0f) >= loadedInspectionTuning.profile.cargoLabeling.minReliableDetectionConfidence
     }
 
     private fun isMeaningfulCargoLabel(value: String): Boolean {
@@ -857,11 +867,12 @@ class AppViewModel(
 class AppViewModelFactory(
     private val repository: PilotRepository,
     private val preferencesRepository: AppPreferencesRepository,
+    private val loadedInspectionTuning: LoadedInspectionTuning,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(AppViewModel::class.java)) {
-            return AppViewModel(repository, preferencesRepository) as T
+            return AppViewModel(repository, preferencesRepository, loadedInspectionTuning) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }

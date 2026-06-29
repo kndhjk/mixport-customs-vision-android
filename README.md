@@ -35,25 +35,58 @@ That keeps the pilot safe and gives us a path to resell the service to other com
 .\gradlew assembleDebug
 ```
 
+## Dataset intake for future pallet / cargo / container-scene training
+
+When you are ready to drop real pallet images, cargo close-ups, and container-interior scene images on this machine, use the intake scaffold first:
+
+```powershell
+C:\Users\zyzmc\AppData\Local\Programs\Python\Python313\python.exe .\tools\dataset_intake.py --dataset-root .\training-data --init
+```
+
+Then place images and annotations into `training-data/raw/...` and run:
+
+```powershell
+C:\Users\zyzmc\AppData\Local\Programs\Python\Python313\python.exe .\tools\dataset_intake.py --dataset-root .\training-data
+```
+
+That produces:
+
+- `training-data/manifests/inspection_dataset_manifest.json`
+- `training-data/manifests/inspection_tuning_profile.generated.json`
+- `training-data/reports/inspection_dataset_summary.md`
+
+See [docs/dataset-intake.md](docs/dataset-intake.md) for the exact folder contract.
+
+## Mobile transformer path
+
+This repo is now tuned for a phone-safe two-stage vision path:
+
+- stage 1: low-cost live proposal tracking on the full camera frame
+- stage 2: only stable cropped targets are sent into richer OCR/label logic and a future quantized transformer classifier
+
+The default transformer target is a lightweight `MobileViTv2`-style crop classifier, not a heavy full-frame detector. That keeps Android latency and thermal load in range before custom training data exists.
+
+See [docs/mobile-transformer-plan.md](docs/mobile-transformer-plan.md) for the exact runtime budgets and rollout path.
+
 ## Current MVP boundaries
 
-- The vision pipeline is scaffolded but still uses demo buttons instead of a trained detector/OCR model.
+- The live mobile path is runtime-optimized, but there is still no custom trained pallet/cargo transformer model in the repo yet.
 - Session data is stored locally first.
 - Sync to the company server is documented but not yet wired to a production API.
 - No secrets are stored in the repo.
 
 ## Next build steps
 
-1. Plug a custom object detector and OCR stack into the CameraX analysis stream.
-2. Add wrap-detection confirmation rules based on consecutive frames.
-3. Build the PHP sync endpoints on the Mixport server.
-4. Add authenticated upload of session summaries and video references.
-5. Add a review screen for disputed counts.
+1. Train and export a quantized crop classifier from the incoming pallet/cargo dataset.
+2. Keep live proposals cheap and only escalate stable tracks into the transformer stage.
+3. Add wrap-detection confirmation rules based on consecutive frames.
+4. Build the PHP sync endpoints on the Mixport server.
+5. Add authenticated upload of session summaries and video references.
+6. Add a review screen for disputed counts.
 
 ## Project map
 
 - `app/`: Android app source
 - `docs/api-contract.md`: proposed pilot API contract for the Mixport server
 - `docs/sql/pilot_schema.sql`: proposed MySQL tables on the shared company database
-
 

@@ -11,8 +11,8 @@ android {
         applicationId = "nz.co.mixport.customsvision"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -87,6 +87,7 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.3.4")
     implementation("androidx.camera:camera-video:1.3.4")
     implementation("androidx.camera:camera-view:1.3.4")
+    implementation("com.google.code.gson:gson:2.10.1")
     implementation("com.google.mlkit:image-labeling:17.0.9")
     implementation("com.google.mlkit:object-detection:17.0.2")
     implementation("com.google.mlkit:text-recognition:16.0.1")

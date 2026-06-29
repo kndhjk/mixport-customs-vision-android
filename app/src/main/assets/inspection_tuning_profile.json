@@ -1,0 +1,53 @@
+{
+  "metadata": {
+    "profileName": "mixport-default-pilot",
+    "profileVersion": "0.4.0",
+    "datasetId": "",
+    "generatedAt": "",
+    "notes": "Bundled fallback tuning profile for the Mixport pilot."
+  },
+  "tracking": {
+    "minStableFrames": 3,
+    "maxTrackGapMs": 1500,
+    "countedEvidenceTtlMs": 20000
+  },
+  "mobileRuntime": {
+    "liveAnalysisMinIntervalMs": 120,
+    "maxSnapshotDetectionsPerPass": 3,
+    "recognitionDownsampleMaxEdgePx": 320,
+    "minRecognitionCropEdgePx": 32
+  },
+  "cargoLabeling": {
+    "minImageLabelConfidence": 0.28,
+    "maxLabelHints": 5,
+    "minReliableDetectionConfidence": 0.72
+  },
+  "transformer": {
+    "enabled": true,
+    "preferredFamily": "MobileViTv2",
+    "modelInputSizePx": 256,
+    "quantized": true,
+    "runOnStableTracksOnly": true,
+    "preferNnapi": true,
+    "cpuThreadCount": 2,
+    "maxTracksPerPass": 3,
+    "targetLatencyMs": 60
+  },
+  "palletReference": {
+    "targetAspectRatio": 2.1,
+    "aspectTolerance": 0.9,
+    "targetWidthRatio": 0.44,
+    "widthTolerance": 0.22,
+    "targetHeightRatio": 0.22,
+    "heightTolerance": 0.12,
+    "bottomAnchorRatio": 0.72,
+    "livePalletThreshold": 0.66,
+    "recognitionPalletThreshold": 0.7,
+    "zoneHorizontalPaddingRatio": 0.18,
+    "zoneSupportAboveRatio": 0.12,
+    "zoneSupportBelowRatio": 0.45,
+    "zoneMinOverlapRatio": 0.35,
+    "zoneItemMaxWidthRatio": 1.35,
+    "zoneItemMaxHeightRatio": 3.5
+  }
+}

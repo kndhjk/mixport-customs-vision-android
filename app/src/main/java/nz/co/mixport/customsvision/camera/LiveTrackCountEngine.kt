@@ -5,10 +5,12 @@ import kotlin.math.hypot
 import kotlin.math.max
 
 class LiveTrackCountEngine(
-    private val minStableFrames: Int = DEFAULT_MIN_STABLE_FRAMES,
-    private val maxTrackGapMs: Long = DEFAULT_MAX_TRACK_GAP_MS,
-    private val countedEvidenceTtlMs: Long = DEFAULT_COUNTED_EVIDENCE_TTL_MS,
+    private val tuning: InspectionTuningProfile = InspectionTuningProfile.default(),
 ) {
+    private val minStableFrames: Int = tuning.tracking.minStableFrames
+    private val maxTrackGapMs: Long = tuning.tracking.maxTrackGapMs
+    private val countedEvidenceTtlMs: Long = tuning.tracking.countedEvidenceTtlMs
+
     private data class TrackMemory(
         val key: String,
         var trackingId: Int?,
@@ -344,19 +346,22 @@ class LiveTrackCountEngine(
         val cargoRight = track.lastCenterX + track.lastWidth / 2f
         val cargoBottom = track.lastCenterY + track.lastHeight / 2f
 
-        val horizontalPadding = palletTrack.lastWidth * 0.18f
+        val horizontalPadding = palletTrack.lastWidth * tuning.palletReference.zoneHorizontalPaddingRatio
         val zoneLeft = palletLeft - horizontalPadding
         val zoneRight = palletRight + horizontalPadding
         val overlapWidth = overlapLength(cargoLeft, cargoRight, zoneLeft, zoneRight)
         val overlapRatio = overlapWidth / max(track.lastWidth, 1f)
         val centerInside = track.lastCenterX in zoneLeft..zoneRight
-        val supportMin = palletTop - max(track.lastHeight * 0.18f, palletTrack.lastHeight * 0.12f)
-        val supportMax = palletBottom + palletTrack.lastHeight * 0.45f
+        val supportMin = palletTop - max(
+            track.lastHeight * tuning.palletReference.zoneHorizontalPaddingRatio,
+            palletTrack.lastHeight * tuning.palletReference.zoneSupportAboveRatio,
+        )
+        val supportMax = palletBottom + palletTrack.lastHeight * tuning.palletReference.zoneSupportBelowRatio
         val bottomSupported = cargoBottom in supportMin..supportMax
-        val notOversized = track.lastWidth <= palletTrack.lastWidth * 1.35f &&
-            track.lastHeight <= palletTrack.lastHeight * 3.5f
+        val notOversized = track.lastWidth <= palletTrack.lastWidth * tuning.palletReference.zoneItemMaxWidthRatio &&
+            track.lastHeight <= palletTrack.lastHeight * tuning.palletReference.zoneItemMaxHeightRatio
 
-        return overlapRatio >= 0.35f &&
+        return overlapRatio >= tuning.palletReference.zoneMinOverlapRatio &&
             centerInside &&
             bottomSupported &&
             notOversized

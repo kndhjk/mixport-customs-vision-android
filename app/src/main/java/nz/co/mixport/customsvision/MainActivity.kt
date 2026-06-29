@@ -23,6 +23,7 @@ class MainActivity : ComponentActivity() {
                     factory = AppViewModelFactory(
                         repository = app.repository,
                         preferencesRepository = app.preferencesRepository,
+                        loadedInspectionTuning = app.loadedInspectionTuning,
                     ),
                 )
                 CustomsApp(viewModel = viewModel)

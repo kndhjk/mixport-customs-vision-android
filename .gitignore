@@ -6,3 +6,7 @@ build/
 captures/
 app/build/
 *.iml
+training-data/raw/
+training-data/manifests/
+training-data/reports/
+training-data/cache/

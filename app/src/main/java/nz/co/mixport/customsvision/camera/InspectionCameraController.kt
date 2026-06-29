@@ -48,6 +48,7 @@ import kotlin.math.sin
 
 class InspectionCameraController(
     private val context: Context,
+    private val tuning: InspectionTuningProfile = InspectionTuningProfile.default(),
 ) {
     private data class CargoVocabularyEntry(
         val label: String,
@@ -64,7 +65,15 @@ class InspectionCameraController(
         val bottomAnchorRatio: Float = 0.72f,
     )
 
-    private val palletReferenceProfile = PalletReferenceProfile()
+    private val palletReferenceProfile = PalletReferenceProfile(
+        targetAspectRatio = tuning.palletReference.targetAspectRatio,
+        aspectTolerance = tuning.palletReference.aspectTolerance,
+        targetWidthRatio = tuning.palletReference.targetWidthRatio,
+        widthTolerance = tuning.palletReference.widthTolerance,
+        targetHeightRatio = tuning.palletReference.targetHeightRatio,
+        heightTolerance = tuning.palletReference.heightTolerance,
+        bottomAnchorRatio = tuning.palletReference.bottomAnchorRatio,
+    )
     private val cargoVocabulary = listOf(
         CargoVocabularyEntry(
             label = "Electric kettle",
@@ -192,6 +201,7 @@ class InspectionCameraController(
         ),
     )
     private val cargoLabelResolver = CargoLabelResolver()
+    private val mobileVisionProfile = MobileVisionProfile.fromContext(context, tuning)
     private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var videoCapture: VideoCapture<Recorder>? = null
     private var activeRecording: Recording? = null
@@ -299,6 +309,14 @@ class InspectionCameraController(
         }
 
         val visibleCargo = detections.filterNot { it.isPalletCandidate }
+            .sortedByDescending { it.width * it.height }
+            .take(
+                minOf(
+                    mobileVisionProfile.maxSnapshotDetectionsPerPass,
+                    tuning.mobileRuntime.maxSnapshotDetectionsPerPass,
+                    tuning.transformer.maxTracksPerPass,
+                ),
+            )
         if (visibleCargo.isEmpty()) {
             onError("No visible cargo is ready for recognition.")
             return
@@ -410,7 +428,7 @@ class InspectionCameraController(
     private fun bundledImageLabeler(): ImageLabeler {
         return imageLabeler ?: ImageLabeling.getClient(
             ImageLabelerOptions.Builder()
-                .setConfidenceThreshold(0.28f)
+                .setConfidenceThreshold(tuning.cargoLabeling.minImageLabelConfidence)
                 .build(),
         ).also { imageLabeler = it }
     }
@@ -433,9 +451,13 @@ class InspectionCameraController(
     ): UniversalRecognitionSnapshot {
         val insights = detections.mapNotNull { detection ->
             val croppedBitmap = cropDetection(snapshotBitmap, detection) ?: return@mapNotNull null
+            val optimizedBitmap = optimizeRecognitionBitmap(croppedBitmap)
             try {
-                analyzeCroppedBitmap(croppedBitmap, detection)
+                analyzeCroppedBitmap(optimizedBitmap, detection)
             } finally {
+                if (optimizedBitmap !== croppedBitmap) {
+                    optimizedBitmap.recycle()
+                }
                 croppedBitmap.recycle()
             }
         }
@@ -455,7 +477,10 @@ class InspectionCameraController(
         val right = detection.right.toInt().coerceIn(left + 1, snapshotBitmap.width)
         val bottom = detection.bottom.toInt().coerceIn(top + 1, snapshotBitmap.height)
         val cropRect = Rect(left, top, right, bottom)
-        if (cropRect.width() < 24 || cropRect.height() < 24) {
+        if (
+            cropRect.width() < tuning.mobileRuntime.minRecognitionCropEdgePx ||
+            cropRect.height() < tuning.mobileRuntime.minRecognitionCropEdgePx
+        ) {
             return null
         }
         return Bitmap.createBitmap(
@@ -465,6 +490,22 @@ class InspectionCameraController(
             cropRect.width(),
             cropRect.height(),
         )
+    }
+
+    private fun optimizeRecognitionBitmap(bitmap: Bitmap): Bitmap {
+        val maxEdge = max(bitmap.width, bitmap.height)
+        val targetEdge = minOf(
+            mobileVisionProfile.recognitionDownsampleMaxEdgePx,
+            tuning.mobileRuntime.recognitionDownsampleMaxEdgePx,
+            maxOf(tuning.transformer.modelInputSizePx, tuning.mobileRuntime.minRecognitionCropEdgePx),
+        )
+        if (targetEdge <= 0 || maxEdge <= targetEdge) {
+            return bitmap
+        }
+        val scale = targetEdge.toFloat() / maxEdge.toFloat()
+        val scaledWidth = maxOf(1, (bitmap.width * scale).toInt())
+        val scaledHeight = maxOf(1, (bitmap.height * scale).toInt())
+        return Bitmap.createScaledBitmap(bitmap, scaledWidth, scaledHeight, true)
     }
 
     private fun analyzeCroppedBitmap(
@@ -481,7 +522,7 @@ class InspectionCameraController(
             .map { it.text.toReadableLabel() }
             .filter { it.isNotBlank() }
             .distinct()
-            .take(5)
+            .take(tuning.cargoLabeling.maxLabelHints)
         val dominantColor = detectDominantColor(croppedBitmap)
         val palletScore = scoreWoodPalletProfile(
             detection = detection,
@@ -489,7 +530,7 @@ class InspectionCameraController(
             labelHints = labelHints,
             markerText = mergedMarkerText,
         )
-        val isPalletLike = palletScore >= 0.7f
+        val isPalletLike = palletScore >= tuning.palletReference.recognitionPalletThreshold
         val mappedCargoLabel = resolveCargoLabel(
             labelHints = labelHints,
             markerText = mergedMarkerText,
@@ -668,6 +709,7 @@ class InspectionCameraController(
         private val onError: (String) -> Unit,
     ) : ImageAnalysis.Analyzer {
         private var lastDeliveredAt: Long = 0L
+        private var lastAnalyzedAt: Long = 0L
         @Volatile
         private var isProcessing = false
         private var lastFailureMessage: String? = null
@@ -684,12 +726,18 @@ class InspectionCameraController(
                 return
             }
 
+            if (now - lastAnalyzedAt < mobileVisionProfile.liveAnalysisIntervalMs) {
+                imageProxy.close()
+                return
+            }
+
             val mediaImage = imageProxy.image
             if (mediaImage == null || previewView.width == 0 || previewView.height == 0) {
                 imageProxy.close()
                 return
             }
 
+            lastAnalyzedAt = now
             isProcessing = true
             val inputImage = InputImage.fromMediaImage(
                 mediaImage,
@@ -780,7 +828,7 @@ class InspectionCameraController(
             val primaryLabel = labels.maxByOrNull { it.confidence }
             val category = primaryLabel?.text?.toReadableLabel() ?: "Unknown"
             val palletScore = scoreLivePalletProfile(rect, previewWidth, previewHeight, category)
-            val isPalletCandidate = palletScore >= 0.66f
+            val isPalletCandidate = palletScore >= tuning.palletReference.livePalletThreshold
 
             return LiveRecognition(
                 trackingId = trackingId,

@@ -99,10 +99,12 @@ private val BrandTint = Color(0xFFFFF3EB)
 fun CustomsApp(viewModel: AppViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val cameraController = remember { InspectionCameraController(context) }
+    val cameraController = remember(uiState.inspectionTuning) {
+        InspectionCameraController(context, uiState.inspectionTuning)
+    }
     val language = uiState.appLanguage
 
-    DisposableEffect(Unit) {
+    DisposableEffect(cameraController) {
         onDispose {
             cameraController.release()
         }
@@ -303,6 +305,9 @@ private fun LiveScreen(
         }
         item {
             StatusCard(uiState = uiState)
+        }
+        item {
+            TuningProfileCard(uiState = uiState)
         }
         item {
             LiveDetectionsCard(
@@ -556,8 +561,8 @@ private fun StatusCard(uiState: LiveInspectionUiState) {
             Text(text = heartbeatText, style = MaterialTheme.typography.bodyMedium)
             Text(
                 text = language.pick(
-                    "Green boxes come from live ML Kit object tracking. The pallet wrap step is still manual.",
-                    "绿色框来自实时 ML Kit 目标追踪。托盘缠膜步骤目前仍为手动确认。",
+                    "Green boxes come from the live proposal detector. On-device optimization now limits frame cadence first, then reserves heavier recognition for cropped stable targets. The pallet wrap step is still manual.",
+                    "绿色框来自实时 proposal 检测器。当前端侧优化会先限制分析帧率，再把更重的识别留给稳定目标的裁剪图。托盘缠膜步骤目前仍为手动确认。",
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -571,6 +576,153 @@ private fun StatusCard(uiState: LiveInspectionUiState) {
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun TuningProfileCard(uiState: LiveInspectionUiState) {
+    val language = uiState.appLanguage
+    val tuning = uiState.inspectionTuning
+    val mobileVisionProfile = uiState.mobileVisionProfile
+    ElevatedCard {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                language.pick("Active Tuning Profile", "当前参数档案"),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = language.pick(
+                    "Source: ${uiState.inspectionTuningSource}",
+                    "来源：${uiState.inspectionTuningSource}",
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    AssistChip(
+                        onClick = {},
+                        label = {
+                            Text(
+                                language.pick(
+                                    "Stable ${tuning.tracking.minStableFrames}",
+                                    "稳定帧 ${tuning.tracking.minStableFrames}",
+                                ),
+                            )
+                        },
+                    )
+                }
+                item {
+                    AssistChip(
+                        onClick = {},
+                        label = {
+                            Text(
+                                language.pick(
+                                    "Gap ${tuning.tracking.maxTrackGapMs}ms",
+                                    "断帧 ${tuning.tracking.maxTrackGapMs}ms",
+                                ),
+                            )
+                        },
+                    )
+                }
+                item {
+                    AssistChip(
+                        onClick = {},
+                        label = {
+                            Text(
+                                language.pick(
+                                    "Pallet live ${formatPercent(tuning.palletReference.livePalletThreshold)}",
+                                    "托盘实时 ${formatPercent(tuning.palletReference.livePalletThreshold)}",
+                                ),
+                            )
+                        },
+                    )
+                }
+                item {
+                    AssistChip(
+                        onClick = {},
+                        label = {
+                            Text(
+                                language.pick(
+                                    "Pallet OCR ${formatPercent(tuning.palletReference.recognitionPalletThreshold)}",
+                                    "托盘识别 ${formatPercent(tuning.palletReference.recognitionPalletThreshold)}",
+                                ),
+                            )
+                        },
+                    )
+                }
+                mobileVisionProfile?.let { profile ->
+                    item {
+                        AssistChip(
+                            onClick = {},
+                            label = {
+                                Text(
+                                    language.pick(
+                                        "Tier ${profile.deviceTier.name}",
+                                        "档位 ${profile.deviceTier.name}",
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = {},
+                            label = {
+                                Text(
+                                    language.pick(
+                                        "~${profile.liveAnalysisFpsCap} FPS cap",
+                                        "约 ${profile.liveAnalysisFpsCap} FPS 上限",
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = {},
+                            label = {
+                                Text(
+                                    language.pick(
+                                        "Crop ${profile.recognitionDownsampleMaxEdgePx}px",
+                                        "裁剪 ${profile.recognitionDownsampleMaxEdgePx}px",
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+            Text(
+                text = language.pick(
+                    "Image labels under ${formatPercent(tuning.cargoLabeling.minImageLabelConfidence)} are ignored. Generic detections only count after ${formatPercent(tuning.cargoLabeling.minReliableDetectionConfidence)} fallback confidence or richer OCR/label evidence.",
+                    "低于 ${formatPercent(tuning.cargoLabeling.minImageLabelConfidence)} 的图像标签会被忽略。通用目标只有在达到 ${formatPercent(tuning.cargoLabeling.minReliableDetectionConfidence)} 的兜底置信度，或拿到更丰富的 OCR / 标签证据后才会计数。",
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            mobileVisionProfile?.let { profile ->
+                Text(
+                    text = language.pick(
+                        "Mobile path: live proposal detector first, then ${profile.transformerSummary} on at most ${profile.transformerMaxTracksPerPass} stable crops per pass. This keeps the phone-friendly path ready before custom training data arrives.",
+                        "端侧路径：先做实时 proposal 检测，再对每轮最多 ${profile.transformerMaxTracksPerPass} 个稳定裁剪目标跑 ${profile.transformerSummary}。这样在自定义训练数据到位前，也先保持手机可运行。",
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                text = language.pick(
+                    "Future dataset calibration should emit an `inspection_tuning_profile.json` file matching this schema so the app can adopt new thresholds directly.",
+                    "后续数据集校准时，应产出同结构的 `inspection_tuning_profile.json`，这样 app 可以直接接入新阈值。",
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
