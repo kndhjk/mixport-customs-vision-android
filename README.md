@@ -27,12 +27,13 @@ This repo is for the first pilot company, using the same company server stack la
 ### 2. FDA scanner workflow for Hikrobot PDA devices
 
 - targets the embedded front FDA scanner head
-- does not expose the rear camera on the scanner page
-- supports two modes:
-  - `AUTO_CONTINUOUS`: continuous scan with front light enabled
-  - `TRIGGER_ONCE`: side-button or on-screen single trigger scan
-- supports hardware scan keys on the PDA body
-- auto-applies the selected scan mode when entering the scanner page
+- does not expose the rear camera or FDA video preview on the scanner page
+- keeps the scanner page in manual trigger mode only
+- supports PDA side hardware scan keys:
+  - tap once: one scan
+  - hold the key: repeated scan until release
+- shows the scanned serial number and database comparison result at the top of the page
+- uses different tones for matched, mismatch, and empty/error results
 
 ### 3. Mobile recognition baseline
 
@@ -135,7 +136,7 @@ Reference docs:
 ## Current boundaries
 
 - pallet and cargo recognition are optimized for on-device runtime, but the final custom-trained model is not in the repo yet
-- scanner preview stability depends on the vendor PDA runtime and device firmware
+- the PDA scanner workflow depends on the vendor runtime and device firmware
 - sync to the company server is still an API contract and roadmap item, not a production endpoint in this app yet
 - no production secrets are stored in the repo
 

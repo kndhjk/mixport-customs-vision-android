@@ -69,7 +69,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
-        if (PdaHardwareKeyDispatcher.shouldConsumeKeyUp(keyCode)) {
+        if (PdaHardwareKeyDispatcher.dispatchKeyUp(keyCode)) {
             Log.i(
                 STARTUP_TAG,
                 "Consumed hardware FDA key up ${PdaHardwareKeyDispatcher.describeKey(keyCode)}",

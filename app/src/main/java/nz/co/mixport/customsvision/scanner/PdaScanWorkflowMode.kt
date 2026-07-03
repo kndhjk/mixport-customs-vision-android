@@ -7,7 +7,7 @@ enum class PdaScanWorkflowMode(val preferenceValue: String) {
 
     companion object {
         fun fromPreference(value: String?): PdaScanWorkflowMode {
-            return values().firstOrNull { it.preferenceValue == value } ?: AUTO_CONTINUOUS
+            return values().firstOrNull { it.preferenceValue == value } ?: TRIGGER_ONCE
         }
     }
 }

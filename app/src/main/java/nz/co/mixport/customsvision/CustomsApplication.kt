@@ -11,6 +11,7 @@ import nz.co.mixport.customsvision.data.PilotRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import nz.co.mixport.customsvision.scanner.HikPdaScanBridge
+import nz.co.mixport.customsvision.scanner.PdaScanWorkflowMode
 
 data class AppBootstrapPayload(
     val repository: PilotRepository,
@@ -51,7 +52,7 @@ class CustomsApplication : Application() {
                 loadedInspectionTuning = loadedInspectionTuning,
                 scannerAutoVerifyEnabled = preferencesRepository.isScannerAutoVerifyEnabled(),
                 scannerSoundEnabled = preferencesRepository.isScannerSoundEnabled(),
-                scannerWorkflowMode = preferencesRepository.getScannerWorkflowMode(),
+                scannerWorkflowMode = PdaScanWorkflowMode.TRIGGER_ONCE,
                 scannerOnboardingDismissed = preferencesRepository.isScannerOnboardingDismissed(),
                 scannerHistory = preferencesRepository.getScannerHistory(),
             ),

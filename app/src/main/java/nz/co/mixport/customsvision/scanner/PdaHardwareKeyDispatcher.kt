@@ -4,21 +4,37 @@ import android.view.KeyEvent
 import java.util.concurrent.atomic.AtomicReference
 
 object PdaHardwareKeyDispatcher {
-    private val handlerRef = AtomicReference<((Int) -> Boolean)?>(null)
+    private data class KeyHandlers(
+        val onKeyDown: ((Int) -> Boolean)?,
+        val onKeyUp: ((Int) -> Boolean)?,
+    )
 
-    fun setHandler(handler: ((Int) -> Boolean)?) {
-        handlerRef.set(handler)
+    private val handlersRef = AtomicReference(KeyHandlers(onKeyDown = null, onKeyUp = null))
+
+    fun setHandlers(
+        onKeyDown: ((Int) -> Boolean)?,
+        onKeyUp: ((Int) -> Boolean)? = null,
+    ) {
+        handlersRef.set(
+            KeyHandlers(
+                onKeyDown = onKeyDown,
+                onKeyUp = onKeyUp,
+            ),
+        )
     }
 
     fun dispatchKeyDown(keyCode: Int): Boolean {
         if (!isHardwareScanKey(keyCode)) {
             return false
         }
-        return handlerRef.get()?.invoke(keyCode) == true
+        return handlersRef.get().onKeyDown?.invoke(keyCode) == true
     }
 
-    fun shouldConsumeKeyUp(keyCode: Int): Boolean {
-        return isHardwareScanKey(keyCode) && handlerRef.get() != null
+    fun dispatchKeyUp(keyCode: Int): Boolean {
+        if (!isHardwareScanKey(keyCode)) {
+            return false
+        }
+        return handlersRef.get().onKeyUp?.invoke(keyCode) == true
     }
 
     fun isHardwareScanKey(keyCode: Int): Boolean {
