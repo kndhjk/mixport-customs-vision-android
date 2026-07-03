@@ -1,22 +1,62 @@
 package nz.co.mixport.customsvision
 
 import android.app.Application
+import android.os.SystemClock
+import android.util.Log
 import nz.co.mixport.customsvision.data.AppPreferencesRepository
+import nz.co.mixport.customsvision.data.AppStartupSnapshot
 import nz.co.mixport.customsvision.data.CustomsDatabaseHelper
 import nz.co.mixport.customsvision.data.InspectionTuningLoader
-import nz.co.mixport.customsvision.data.LoadedInspectionTuning
 import nz.co.mixport.customsvision.data.PilotRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import nz.co.mixport.customsvision.scanner.HikPdaScanBridge
+
+data class AppBootstrapPayload(
+    val repository: PilotRepository,
+    val preferencesRepository: AppPreferencesRepository,
+    val startupSnapshot: AppStartupSnapshot,
+)
 
 class CustomsApplication : Application() {
-    val repository: PilotRepository by lazy {
-        PilotRepository(CustomsDatabaseHelper(this))
+    @Volatile
+    private var bootstrapPayload: AppBootstrapPayload? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        Log.i(STARTUP_TAG, "Application.onCreate at ${SystemClock.elapsedRealtime()} ms")
     }
 
-    val preferencesRepository: AppPreferencesRepository by lazy {
-        AppPreferencesRepository(this)
+    suspend fun loadBootstrapPayload(): AppBootstrapPayload {
+        bootstrapPayload?.let { return it }
+        return withContext(Dispatchers.IO) {
+            bootstrapPayload?.let { return@withContext it }
+            synchronized(this@CustomsApplication) {
+                bootstrapPayload ?: buildBootstrapPayload().also { payload ->
+                    bootstrapPayload = payload
+                }
+            }
+        }
     }
 
-    val loadedInspectionTuning: LoadedInspectionTuning by lazy {
-        InspectionTuningLoader(this).load()
+    private fun buildBootstrapPayload(): AppBootstrapPayload {
+        val preferencesRepository = AppPreferencesRepository(this)
+        val loadedInspectionTuning = InspectionTuningLoader(this).load()
+        return AppBootstrapPayload(
+            repository = PilotRepository(CustomsDatabaseHelper(this)),
+            preferencesRepository = preferencesRepository,
+            startupSnapshot = AppStartupSnapshot(
+                appLanguage = preferencesRepository.getLanguage(),
+                pdaScannerAvailable = HikPdaScanBridge.isPdaServiceInstalled(this),
+                loadedInspectionTuning = loadedInspectionTuning,
+                scannerAutoVerifyEnabled = preferencesRepository.isScannerAutoVerifyEnabled(),
+                scannerSoundEnabled = preferencesRepository.isScannerSoundEnabled(),
+                scannerWorkflowMode = preferencesRepository.getScannerWorkflowMode(),
+                scannerOnboardingDismissed = preferencesRepository.isScannerOnboardingDismissed(),
+                scannerHistory = preferencesRepository.getScannerHistory(),
+            ),
+        )
     }
 }
+
+private const val STARTUP_TAG = "MixportStartup"

@@ -10,3 +10,13 @@ training-data/raw/
 training-data/manifests/
 training-data/reports/
 training-data/cache/
+mixport*.png
+current-*.png
+device-screen.png
+post-restart-screen.png
+manual-light-broadcast-test.txt
+pda-preview-logcat.txt
+scanner-*.txt
+startup-logcat*.txt
+stock-scanassist-check.txt
+tmp_scanassist/

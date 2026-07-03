@@ -3,6 +3,7 @@ package nz.co.mixport.customsvision.data
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import nz.co.mixport.customsvision.scanner.PdaScanWorkflowMode
 
 class AppPreferencesRepository(context: Context) {
     private val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -29,6 +30,16 @@ class AppPreferencesRepository(context: Context) {
 
     fun setScannerSoundEnabled(enabled: Boolean) {
         preferences.edit().putBoolean(KEY_SCANNER_SOUND, enabled).apply()
+    }
+
+    fun getScannerWorkflowMode(): PdaScanWorkflowMode {
+        return PdaScanWorkflowMode.fromPreference(
+            preferences.getString(KEY_SCANNER_WORKFLOW_MODE, null),
+        )
+    }
+
+    fun setScannerWorkflowMode(mode: PdaScanWorkflowMode) {
+        preferences.edit().putString(KEY_SCANNER_WORKFLOW_MODE, mode.preferenceValue).apply()
     }
 
     fun isScannerOnboardingDismissed(): Boolean {
@@ -85,6 +96,7 @@ class AppPreferencesRepository(context: Context) {
         private const val KEY_LANGUAGE = "language"
         private const val KEY_SCANNER_AUTO_VERIFY = "scanner_auto_verify"
         private const val KEY_SCANNER_SOUND = "scanner_sound"
+        private const val KEY_SCANNER_WORKFLOW_MODE = "scanner_workflow_mode"
         private const val KEY_SCANNER_ONBOARDING_DISMISSED = "scanner_onboarding_dismissed"
         private const val KEY_SCANNER_HISTORY = "scanner_history"
     }

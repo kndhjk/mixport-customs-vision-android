@@ -16,11 +16,11 @@ import nz.co.mixport.customsvision.camera.MobileVisionProfile
 import nz.co.mixport.customsvision.camera.UniversalRecognitionSnapshot
 import nz.co.mixport.customsvision.data.AppLanguage
 import nz.co.mixport.customsvision.data.AppPreferencesRepository
+import nz.co.mixport.customsvision.data.AppStartupSnapshot
 import nz.co.mixport.customsvision.data.BarcodeLookupResult
 import nz.co.mixport.customsvision.data.CargoSummaryRecord
 import nz.co.mixport.customsvision.data.EventLogRecord
 import nz.co.mixport.customsvision.data.InspectionSessionRecord
-import nz.co.mixport.customsvision.data.LoadedInspectionTuning
 import nz.co.mixport.customsvision.data.PalletDetail
 import nz.co.mixport.customsvision.data.PilotRepository
 import nz.co.mixport.customsvision.data.ScannerMatchStatus
@@ -31,6 +31,7 @@ import nz.co.mixport.customsvision.domain.SessionPhase
 import nz.co.mixport.customsvision.domain.WorkflowAction
 import nz.co.mixport.customsvision.domain.WorkflowEvent
 import nz.co.mixport.customsvision.domain.WorkflowState
+import nz.co.mixport.customsvision.scanner.PdaScanWorkflowMode
 
 enum class AppDestination {
     LIVE,
@@ -42,6 +43,7 @@ data class ScannerUiState(
     val barcodeInput: String = "",
     val isAutoVerifyEnabled: Boolean = true,
     val isSoundEnabled: Boolean = true,
+    val workflowMode: PdaScanWorkflowMode = PdaScanWorkflowMode.AUTO_CONTINUOUS,
     val onboardingDismissed: Boolean = false,
     val isProcessing: Boolean = false,
     val lastResult: ScannerMatchStatus = ScannerMatchStatus.WAITING,
@@ -88,20 +90,27 @@ data class LiveInspectionUiState(
 class AppViewModel(
     private val repository: PilotRepository,
     private val preferencesRepository: AppPreferencesRepository,
-    private val loadedInspectionTuning: LoadedInspectionTuning,
+    startupSnapshot: AppStartupSnapshot,
 ) : ViewModel() {
+    private val loadedInspectionTuning = startupSnapshot.loadedInspectionTuning
     private val reducer = PalletWorkflowReducer()
     private val _uiState = MutableStateFlow(
         LiveInspectionUiState(
-            appLanguage = preferencesRepository.getLanguage(),
+            appLanguage = startupSnapshot.appLanguage,
             inspectionTuning = loadedInspectionTuning.profile,
             mobileVisionProfile = loadedInspectionTuning.mobileVisionProfile,
             inspectionTuningSource = loadedInspectionTuning.sourceDescription,
+            selectedDestination = if (startupSnapshot.pdaScannerAvailable) {
+                AppDestination.SCANNER
+            } else {
+                AppDestination.LIVE
+            },
             scanner = ScannerUiState(
-                isAutoVerifyEnabled = preferencesRepository.isScannerAutoVerifyEnabled(),
-                isSoundEnabled = preferencesRepository.isScannerSoundEnabled(),
-                onboardingDismissed = preferencesRepository.isScannerOnboardingDismissed(),
-                history = preferencesRepository.getScannerHistory(),
+                isAutoVerifyEnabled = startupSnapshot.scannerAutoVerifyEnabled,
+                isSoundEnabled = startupSnapshot.scannerSoundEnabled,
+                workflowMode = startupSnapshot.scannerWorkflowMode,
+                onboardingDismissed = startupSnapshot.scannerOnboardingDismissed,
+                history = startupSnapshot.scannerHistory,
             ),
         ),
     )
@@ -182,6 +191,17 @@ class AppViewModel(
         }
     }
 
+    fun setScannerWorkflowMode(mode: PdaScanWorkflowMode) {
+        preferencesRepository.setScannerWorkflowMode(mode)
+        _uiState.update {
+            it.copy(
+                scanner = it.scanner.copy(
+                    workflowMode = mode,
+                ),
+            )
+        }
+    }
+
     fun dismissScannerOnboarding() {
         preferencesRepository.setScannerOnboardingDismissed(true)
         _uiState.update {
@@ -213,7 +233,7 @@ class AppViewModel(
                         lastResult = ScannerMatchStatus.ERROR,
                         statusMessage = it.appLanguage.pick(
                             "Please scan or enter a barcode first.",
-                            "请先扫描或输入条码。",
+                            "ÃƒÂ¨Ã‚Â¯Ã‚Â·ÃƒÂ¥Ã¢â‚¬Â¦Ã‹â€ ÃƒÂ¦Ã¢â‚¬Â°Ã‚Â«ÃƒÂ¦Ã‚ÂÃ‚ÂÃƒÂ¦Ã‹â€ Ã¢â‚¬â€œÃƒÂ¨Ã‚Â¾Ã¢â‚¬Å“ÃƒÂ¥Ã¢â‚¬Â¦Ã‚Â¥ÃƒÂ¦Ã‚ÂÃ‚Â¡ÃƒÂ§Ã‚Â Ã‚ÂÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
                         ),
                     ),
                 )
@@ -230,7 +250,7 @@ class AppViewModel(
                     isProcessing = true,
                     statusMessage = it.appLanguage.pick(
                         "Verifying barcode...",
-                        "正在验证条码...",
+                        "ÃƒÂ¦Ã‚Â­Ã‚Â£ÃƒÂ¥Ã…â€œÃ‚Â¨ÃƒÂ©Ã‚ÂªÃ…â€™ÃƒÂ¨Ã‚Â¯Ã‚ÂÃƒÂ¦Ã‚ÂÃ‚Â¡ÃƒÂ§Ã‚Â Ã‚Â...",
                     ),
                 ),
             )
@@ -249,7 +269,7 @@ class AppViewModel(
                     scannedBarcode = normalized,
                     databaseRecord = localizedErrorRecord(),
                     matchStatus = ScannerMatchStatus.ERROR,
-                    status = throwable.message ?: currentLanguage().pick("Error", "错误"),
+                    status = throwable.message ?: currentLanguage().pick("Error", "ÃƒÂ©Ã¢â‚¬ÂÃ¢â€žÂ¢ÃƒÂ¨Ã‚Â¯Ã‚Â¯"),
                     source = "LOCAL",
                     scannedAt = verifiedAt,
                 )
@@ -273,6 +293,33 @@ class AppViewModel(
                 )
             }
         }
+    }
+
+    fun onScannerPdaDetected(
+        barcode: String,
+        codeType: String,
+    ) {
+        val normalized = barcode.trim().uppercase()
+        if (normalized.isBlank() || _uiState.value.scanner.isProcessing) {
+            return
+        }
+
+        _uiState.update {
+            val typeSuffix = codeType
+                .trim()
+                .takeIf(String::isNotBlank)
+                ?.let { type -> " ($type)" }
+                .orEmpty()
+            it.copy(
+                scanner = it.scanner.copy(
+                    statusMessage = it.appLanguage.pick(
+                        "PDA scanner detected ${normalized}${typeSuffix}. Verifying...",
+                        "PDA æ‰«ç å™¨è¯†åˆ«åˆ° ${normalized}${typeSuffix}ï¼Œæ­£åœ¨éªŒè¯...",
+                    ),
+                ),
+            )
+        }
+        verifyScannerBarcode(normalized)
     }
 
     fun onFrameHeartbeat(heartbeatAt: Long) {
@@ -300,7 +347,7 @@ class AppViewModel(
                 isUniversalRecognitionRunning = true,
                 infoMessage = it.appLanguage.pick(
                     "Analyzing visible cargo with OCR, color, and target labels...",
-                    "正在结合 OCR、颜色和目标类别识别可见货物...",
+                    "ÃƒÂ¦Ã‚Â­Ã‚Â£ÃƒÂ¥Ã…â€œÃ‚Â¨ÃƒÂ§Ã‚Â»Ã¢â‚¬Å“ÃƒÂ¥Ã‚ÂÃ‹â€  OCRÃƒÂ£Ã¢â€šÂ¬Ã‚ÂÃƒÂ©Ã‚Â¢Ã…â€œÃƒÂ¨Ã¢â‚¬Â°Ã‚Â²ÃƒÂ¥Ã¢â‚¬â„¢Ã…â€™ÃƒÂ§Ã¢â‚¬ÂºÃ‚Â®ÃƒÂ¦Ã‚Â Ã¢â‚¬Â¡ÃƒÂ§Ã‚Â±Ã‚Â»ÃƒÂ¥Ã‹â€ Ã‚Â«ÃƒÂ¨Ã‚Â¯Ã¢â‚¬Â ÃƒÂ¥Ã‹â€ Ã‚Â«ÃƒÂ¥Ã‚ÂÃ‚Â¯ÃƒÂ¨Ã‚Â§Ã‚ÂÃƒÂ¨Ã‚Â´Ã‚Â§ÃƒÂ§Ã¢â‚¬Â°Ã‚Â©...",
                 ),
                 errorMessage = null,
             )
@@ -316,12 +363,12 @@ class AppViewModel(
                 infoMessage = if (decoratedSnapshot.items.isEmpty()) {
                     it.appLanguage.pick(
                         "No recognizable cargo was found in the current view.",
-                        "当前画面里没有识别出明确货物。",
+                        "ÃƒÂ¥Ã‚Â½Ã¢â‚¬Å“ÃƒÂ¥Ã¢â‚¬Â°Ã‚ÂÃƒÂ§Ã¢â‚¬ÂÃ‚Â»ÃƒÂ©Ã‚ÂÃ‚Â¢ÃƒÂ©Ã¢â‚¬Â¡Ã…â€™ÃƒÂ¦Ã‚Â²Ã‚Â¡ÃƒÂ¦Ã…â€œÃ¢â‚¬Â°ÃƒÂ¨Ã‚Â¯Ã¢â‚¬Â ÃƒÂ¥Ã‹â€ Ã‚Â«ÃƒÂ¥Ã¢â‚¬Â¡Ã‚ÂºÃƒÂ¦Ã‹Å“Ã…Â½ÃƒÂ§Ã‚Â¡Ã‚Â®ÃƒÂ¨Ã‚Â´Ã‚Â§ÃƒÂ§Ã¢â‚¬Â°Ã‚Â©ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
                     )
                 } else {
                     it.appLanguage.pick(
                         "Analyzed ${decoratedSnapshot.items.size} visible cargo item(s).",
-                        "已分析 ${snapshot.items.size} 个可见货物对象。",
+                        "ÃƒÂ¥Ã‚Â·Ã‚Â²ÃƒÂ¥Ã‹â€ Ã¢â‚¬Â ÃƒÂ¦Ã…Â¾Ã‚Â ${snapshot.items.size} ÃƒÂ¤Ã‚Â¸Ã‚ÂªÃƒÂ¥Ã‚ÂÃ‚Â¯ÃƒÂ¨Ã‚Â§Ã‚ÂÃƒÂ¨Ã‚Â´Ã‚Â§ÃƒÂ§Ã¢â‚¬Â°Ã‚Â©ÃƒÂ¥Ã‚Â¯Ã‚Â¹ÃƒÂ¨Ã‚Â±Ã‚Â¡ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
                     )
                 },
                 errorMessage = null,
@@ -363,7 +410,7 @@ class AppViewModel(
                 it.copy(
                     errorMessage = it.appLanguage.pick(
                         "Container code and operator are required before the session can start.",
-                        "开始作业前必须填写柜号和操作员。",
+                        "ÃƒÂ¥Ã‚Â¼Ã¢â€šÂ¬ÃƒÂ¥Ã‚Â§Ã¢â‚¬Â¹ÃƒÂ¤Ã‚Â½Ã…â€œÃƒÂ¤Ã‚Â¸Ã…Â¡ÃƒÂ¥Ã¢â‚¬Â°Ã‚ÂÃƒÂ¥Ã‚Â¿Ã¢â‚¬Â¦ÃƒÂ©Ã‚Â¡Ã‚Â»ÃƒÂ¥Ã‚Â¡Ã‚Â«ÃƒÂ¥Ã¢â‚¬Â Ã¢â€žÂ¢ÃƒÂ¦Ã…Â¸Ã…â€œÃƒÂ¥Ã‚ÂÃ‚Â·ÃƒÂ¥Ã¢â‚¬â„¢Ã…â€™ÃƒÂ¦Ã¢â‚¬Å“Ã‚ÂÃƒÂ¤Ã‚Â½Ã…â€œÃƒÂ¥Ã¢â‚¬ËœÃ‹Å“ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
                     ),
                 )
             }
@@ -378,7 +425,7 @@ class AppViewModel(
                 currentPalletId = null,
                 infoMessage = currentLanguage().pick(
                     "Session ${session.containerCode} started.",
-                    "作业 ${session.containerCode} 已开始。",
+                    "ÃƒÂ¤Ã‚Â½Ã…â€œÃƒÂ¤Ã‚Â¸Ã…Â¡ ${session.containerCode} ÃƒÂ¥Ã‚Â·Ã‚Â²ÃƒÂ¥Ã‚Â¼Ã¢â€šÂ¬ÃƒÂ¥Ã‚Â§Ã¢â‚¬Â¹ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
                 ),
             )
             _uiState.update {
@@ -411,7 +458,7 @@ class AppViewModel(
                     isUniversalRecognitionRunning = false,
                     universalRecognitionSnapshot = null,
                     isRecording = false,
-                    infoMessage = it.appLanguage.pick("Session closed.", "作业已关闭。"),
+                    infoMessage = it.appLanguage.pick("Session closed.", "ÃƒÂ¤Ã‚Â½Ã…â€œÃƒÂ¤Ã‚Â¸Ã…Â¡ÃƒÂ¥Ã‚Â·Ã‚Â²ÃƒÂ¥Ã¢â‚¬Â¦Ã‚Â³ÃƒÂ©Ã¢â‚¬â€Ã‚Â­ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡"),
                     errorMessage = null,
                 )
             }
@@ -431,7 +478,7 @@ class AppViewModel(
                 it.copy(
                     errorMessage = it.appLanguage.pick(
                         "Start a session before counting tracked objects.",
-                        "开始作业后才能统计跟踪到的货物。",
+                        "ÃƒÂ¥Ã‚Â¼Ã¢â€šÂ¬ÃƒÂ¥Ã‚Â§Ã¢â‚¬Â¹ÃƒÂ¤Ã‚Â½Ã…â€œÃƒÂ¤Ã‚Â¸Ã…Â¡ÃƒÂ¥Ã‚ÂÃ…Â½ÃƒÂ¦Ã¢â‚¬Â°Ã‚ÂÃƒÂ¨Ã†â€™Ã‚Â½ÃƒÂ§Ã‚Â»Ã…Â¸ÃƒÂ¨Ã‚Â®Ã‚Â¡ÃƒÂ¨Ã‚Â·Ã…Â¸ÃƒÂ¨Ã‚Â¸Ã‚ÂªÃƒÂ¥Ã‹â€ Ã‚Â°ÃƒÂ§Ã…Â¡Ã¢â‚¬Å¾ÃƒÂ¨Ã‚Â´Ã‚Â§ÃƒÂ§Ã¢â‚¬Â°Ã‚Â©ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
                     ),
                 )
             }
@@ -456,7 +503,7 @@ class AppViewModel(
                         it.copy(
                             errorMessage = it.appLanguage.pick(
                                 "No pallet candidate is visible yet. Aim the camera at the pallet first.",
-                                "当前还没有看到托盘候选，请先把镜头对准托盘。",
+                                "ÃƒÂ¥Ã‚Â½Ã¢â‚¬Å“ÃƒÂ¥Ã¢â‚¬Â°Ã‚ÂÃƒÂ¨Ã‚Â¿Ã‹Å“ÃƒÂ¦Ã‚Â²Ã‚Â¡ÃƒÂ¦Ã…â€œÃ¢â‚¬Â°ÃƒÂ§Ã…â€œÃ¢â‚¬Â¹ÃƒÂ¥Ã‹â€ Ã‚Â°ÃƒÂ¦Ã¢â‚¬Â°Ã‹Å“ÃƒÂ§Ã¢â‚¬ÂºÃ‹Å“ÃƒÂ¥Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÂ©Ã¢â€šÂ¬Ã¢â‚¬Â°ÃƒÂ¯Ã‚Â¼Ã…â€™ÃƒÂ¨Ã‚Â¯Ã‚Â·ÃƒÂ¥Ã¢â‚¬Â¦Ã‹â€ ÃƒÂ¦Ã…Â Ã…Â ÃƒÂ©Ã¢â‚¬Â¢Ã…â€œÃƒÂ¥Ã‚Â¤Ã‚Â´ÃƒÂ¥Ã‚Â¯Ã‚Â¹ÃƒÂ¥Ã¢â‚¬Â¡Ã¢â‚¬Â ÃƒÂ¦Ã¢â‚¬Â°Ã‹Å“ÃƒÂ§Ã¢â‚¬ÂºÃ‹Å“ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
                             ),
                         )
                     }
@@ -512,7 +559,7 @@ class AppViewModel(
                     it.copy(
                         infoMessage = it.appLanguage.pick(
                             "No new tracked cargo is ready to count.",
-                            "当前没有新的可统计货物。",
+                            "ÃƒÂ¥Ã‚Â½Ã¢â‚¬Å“ÃƒÂ¥Ã¢â‚¬Â°Ã‚ÂÃƒÂ¦Ã‚Â²Ã‚Â¡ÃƒÂ¦Ã…â€œÃ¢â‚¬Â°ÃƒÂ¦Ã¢â‚¬â€œÃ‚Â°ÃƒÂ§Ã…Â¡Ã¢â‚¬Å¾ÃƒÂ¥Ã‚ÂÃ‚Â¯ÃƒÂ§Ã‚Â»Ã…Â¸ÃƒÂ¨Ã‚Â®Ã‚Â¡ÃƒÂ¨Ã‚Â´Ã‚Â§ÃƒÂ§Ã¢â‚¬Â°Ã‚Â©ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
                         ),
                         errorMessage = null,
                     )
@@ -522,7 +569,7 @@ class AppViewModel(
                         it.copy(
                             infoMessage = it.appLanguage.pick(
                                 "$stabilizingCount tracked object(s) are still stabilizing. Hold the camera steady for another moment.",
-                                "è¿˜æœ‰ $stabilizingCount ä¸ªè·Ÿè¸ªå¯¹è±¡åœ¨ç¨³å®šä¸­ï¼Œè¯·å†ç¨å¾®ä¿æŒç”»é¢ç¨³å®šã€‚",
+                                "ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¿Ãƒâ€¹Ã…â€œÃƒÆ’Ã‚Â¦Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â° $stabilizingCount ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂªÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â·Ãƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂªÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¯Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â±Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã‚Â¥Ãƒâ€¦Ã¢â‚¬Å“Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â¨Ãƒâ€šÃ‚Â³ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â®Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¼Ãƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¯Ãƒâ€šÃ‚Â·ÃƒÆ’Ã‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â¨Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¾Ãƒâ€šÃ‚Â®ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¦Ãƒâ€¦Ã¢â‚¬â„¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â§ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚Â©Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â¨Ãƒâ€šÃ‚Â³ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â®Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡",
                             ),
                             errorMessage = null,
                         )
@@ -532,7 +579,7 @@ class AppViewModel(
                         it.copy(
                             infoMessage = it.appLanguage.pick(
                                 "$awaitingPlacementCount tracked object(s) are visible but not yet sitting on the pallet zone.",
-                                "$awaitingPlacementCount 个跟踪对象已出现，但还没有进入托盘装货区域。",
+                                "$awaitingPlacementCount ÃƒÂ¤Ã‚Â¸Ã‚ÂªÃƒÂ¨Ã‚Â·Ã…Â¸ÃƒÂ¨Ã‚Â¸Ã‚ÂªÃƒÂ¥Ã‚Â¯Ã‚Â¹ÃƒÂ¨Ã‚Â±Ã‚Â¡ÃƒÂ¥Ã‚Â·Ã‚Â²ÃƒÂ¥Ã¢â‚¬Â¡Ã‚ÂºÃƒÂ§Ã…Â½Ã‚Â°ÃƒÂ¯Ã‚Â¼Ã…â€™ÃƒÂ¤Ã‚Â½Ã¢â‚¬Â ÃƒÂ¨Ã‚Â¿Ã‹Å“ÃƒÂ¦Ã‚Â²Ã‚Â¡ÃƒÂ¦Ã…â€œÃ¢â‚¬Â°ÃƒÂ¨Ã‚Â¿Ã¢â‚¬ÂºÃƒÂ¥Ã¢â‚¬Â¦Ã‚Â¥ÃƒÂ¦Ã¢â‚¬Â°Ã‹Å“ÃƒÂ§Ã¢â‚¬ÂºÃ‹Å“ÃƒÂ¨Ã‚Â£Ã¢â‚¬Â¦ÃƒÂ¨Ã‚Â´Ã‚Â§ÃƒÂ¥Ã…â€™Ã‚ÂºÃƒÂ¥Ã…Â¸Ã…Â¸ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
                             ),
                             errorMessage = null,
                         )
@@ -542,7 +589,7 @@ class AppViewModel(
                         it.copy(
                             infoMessage = it.appLanguage.pick(
                                 "$awaitingAnalysisCount stable object(s) need richer OCR or label evidence before counting.",
-                                "$awaitingAnalysisCount 个稳定对象还需要更多 OCR 或标签证据后才会计数。",
+                                "$awaitingAnalysisCount ÃƒÂ¤Ã‚Â¸Ã‚ÂªÃƒÂ§Ã‚Â¨Ã‚Â³ÃƒÂ¥Ã‚Â®Ã…Â¡ÃƒÂ¥Ã‚Â¯Ã‚Â¹ÃƒÂ¨Ã‚Â±Ã‚Â¡ÃƒÂ¨Ã‚Â¿Ã‹Å“ÃƒÂ©Ã…â€œÃ¢â€šÂ¬ÃƒÂ¨Ã‚Â¦Ã‚ÂÃƒÂ¦Ã¢â‚¬ÂºÃ‚Â´ÃƒÂ¥Ã‚Â¤Ã…Â¡ OCR ÃƒÂ¦Ã‹â€ Ã¢â‚¬â€œÃƒÂ¦Ã‚Â Ã¢â‚¬Â¡ÃƒÂ§Ã‚Â­Ã‚Â¾ÃƒÂ¨Ã‚Â¯Ã‚ÂÃƒÂ¦Ã‚ÂÃ‚Â®ÃƒÂ¥Ã‚ÂÃ…Â½ÃƒÂ¦Ã¢â‚¬Â°Ã‚ÂÃƒÂ¤Ã‚Â¼Ã…Â¡ÃƒÂ¨Ã‚Â®Ã‚Â¡ÃƒÂ¦Ã¢â‚¬Â¢Ã‚Â°ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
                             ),
                             errorMessage = null,
                         )
@@ -583,7 +630,7 @@ class AppViewModel(
                     universalRecognitionSnapshot = decorateRecognitionSnapshot(it.universalRecognitionSnapshot),
                     infoMessage = it.appLanguage.pick(
                         "${countableDetections.size} tracked object(s) counted from the live view.",
-                        "已从实时画面统计 ${countableDetections.size} 个跟踪对象。",
+                        "ÃƒÂ¥Ã‚Â·Ã‚Â²ÃƒÂ¤Ã‚Â»Ã…Â½ÃƒÂ¥Ã‚Â®Ã…Â¾ÃƒÂ¦Ã¢â‚¬â€Ã‚Â¶ÃƒÂ§Ã¢â‚¬ÂÃ‚Â»ÃƒÂ©Ã‚ÂÃ‚Â¢ÃƒÂ§Ã‚Â»Ã…Â¸ÃƒÂ¨Ã‚Â®Ã‚Â¡ ${countableDetections.size} ÃƒÂ¤Ã‚Â¸Ã‚ÂªÃƒÂ¨Ã‚Â·Ã…Â¸ÃƒÂ¨Ã‚Â¸Ã‚ÂªÃƒÂ¥Ã‚Â¯Ã‚Â¹ÃƒÂ¨Ã‚Â±Ã‚Â¡ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
                     ),
                     errorMessage = null,
                 )
@@ -604,7 +651,7 @@ class AppViewModel(
                 it.copy(
                     errorMessage = it.appLanguage.pick(
                         "Start a session before processing detections.",
-                        "请先开始作业，再处理识别结果。",
+                        "ÃƒÂ¨Ã‚Â¯Ã‚Â·ÃƒÂ¥Ã¢â‚¬Â¦Ã‹â€ ÃƒÂ¥Ã‚Â¼Ã¢â€šÂ¬ÃƒÂ¥Ã‚Â§Ã¢â‚¬Â¹ÃƒÂ¤Ã‚Â½Ã…â€œÃƒÂ¤Ã‚Â¸Ã…Â¡ÃƒÂ¯Ã‚Â¼Ã…â€™ÃƒÂ¥Ã¢â‚¬Â Ã‚ÂÃƒÂ¥Ã‚Â¤Ã¢â‚¬Å¾ÃƒÂ§Ã‚ÂÃ¢â‚¬Â ÃƒÂ¨Ã‚Â¯Ã¢â‚¬Â ÃƒÂ¥Ã‹â€ Ã‚Â«ÃƒÂ§Ã‚Â»Ã¢â‚¬Å“ÃƒÂ¦Ã…Â¾Ã…â€œÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
                     ),
                 )
             }
@@ -643,7 +690,7 @@ class AppViewModel(
                     )
                     infoMessage = currentLanguage().pick(
                         "${action.itemLabel} counted.",
-                        "${action.itemLabel} 已计数。",
+                        "${action.itemLabel} ÃƒÂ¥Ã‚Â·Ã‚Â²ÃƒÂ¨Ã‚Â®Ã‚Â¡ÃƒÂ¦Ã¢â‚¬Â¢Ã‚Â°ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
                     )
                 }
 
@@ -671,7 +718,7 @@ class AppViewModel(
                         trackCountEngine.resetForNextPallet()
                         infoMessage = currentLanguage().pick(
                             "Pallet #${action.sequenceNumber} archived.",
-                            "托盘 #${action.sequenceNumber} 已归档。",
+                            "ÃƒÂ¦Ã¢â‚¬Â°Ã‹Å“ÃƒÂ§Ã¢â‚¬ÂºÃ‹Å“ #${action.sequenceNumber} ÃƒÂ¥Ã‚Â·Ã‚Â²ÃƒÂ¥Ã‚Â½Ã¢â‚¬â„¢ÃƒÂ¦Ã‚Â¡Ã‚Â£ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
                         )
                     }
                 }
@@ -773,7 +820,7 @@ class AppViewModel(
                     scannedBarcode = barcode,
                     databaseRecord = localizedErrorRecord(),
                     matchStatus = ScannerMatchStatus.ERROR,
-                    status = currentLanguage().pick("Invalid barcode format", "条码格式无效"),
+                    status = currentLanguage().pick("Invalid barcode format", "ÃƒÂ¦Ã‚ÂÃ‚Â¡ÃƒÂ§Ã‚Â Ã‚ÂÃƒÂ¦Ã‚Â Ã‚Â¼ÃƒÂ¥Ã‚Â¼Ã‚ÂÃƒÂ¦Ã¢â‚¬â€Ã‚Â ÃƒÂ¦Ã¢â‚¬Â¢Ã‹â€ "),
                     source = "LOCAL",
                     scannedAt = scannedAt,
                 )
@@ -793,9 +840,9 @@ class AppViewModel(
             else -> {
                 ScannerRecord(
                     scannedBarcode = barcode,
-                    databaseRecord = currentLanguage().pick("Not found", "未找到"),
+                    databaseRecord = currentLanguage().pick("Not found", "ÃƒÂ¦Ã…â€œÃ‚ÂªÃƒÂ¦Ã¢â‚¬Â°Ã‚Â¾ÃƒÂ¥Ã‹â€ Ã‚Â°"),
                     matchStatus = ScannerMatchStatus.MISMATCH,
-                    status = currentLanguage().pick("Unknown", "未知"),
+                    status = currentLanguage().pick("Unknown", "ÃƒÂ¦Ã…â€œÃ‚ÂªÃƒÂ§Ã…Â¸Ã‚Â¥"),
                     source = "LOCAL",
                     scannedAt = scannedAt,
                 )
@@ -807,28 +854,28 @@ class AppViewModel(
         return when (record.matchStatus) {
             ScannerMatchStatus.MATCHED -> currentLanguage().pick(
                 "\"${record.scannedBarcode}\" verified successfully.",
-                "条码“${record.scannedBarcode}”验证成功。",
+                "ÃƒÂ¦Ã‚ÂÃ‚Â¡ÃƒÂ§Ã‚Â Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ${record.scannedBarcode}ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ©Ã‚ÂªÃ…â€™ÃƒÂ¨Ã‚Â¯Ã‚ÂÃƒÂ¦Ã‹â€ Ã‚ÂÃƒÂ¥Ã…Â Ã…Â¸ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
             )
 
             ScannerMatchStatus.MISMATCH -> currentLanguage().pick(
                 "\"${record.scannedBarcode}\" was not found.",
-                "未找到条码“${record.scannedBarcode}”。",
+                "ÃƒÂ¦Ã…â€œÃ‚ÂªÃƒÂ¦Ã¢â‚¬Â°Ã‚Â¾ÃƒÂ¥Ã‹â€ Ã‚Â°ÃƒÂ¦Ã‚ÂÃ‚Â¡ÃƒÂ§Ã‚Â Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ${record.scannedBarcode}ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
             )
 
             ScannerMatchStatus.ERROR -> currentLanguage().pick(
                 "\"${record.scannedBarcode}\" could not be verified.",
-                "条码“${record.scannedBarcode}”无法验证。",
+                "ÃƒÂ¦Ã‚ÂÃ‚Â¡ÃƒÂ§Ã‚Â Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ${record.scannedBarcode}ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¦Ã¢â‚¬â€Ã‚Â ÃƒÂ¦Ã‚Â³Ã¢â‚¬Â¢ÃƒÂ©Ã‚ÂªÃ…â€™ÃƒÂ¨Ã‚Â¯Ã‚ÂÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
             )
 
             ScannerMatchStatus.WAITING -> currentLanguage().pick(
                 "Waiting for barcode input.",
-                "等待条码输入。",
+                "ÃƒÂ§Ã‚Â­Ã¢â‚¬Â°ÃƒÂ¥Ã‚Â¾Ã¢â‚¬Â¦ÃƒÂ¦Ã‚ÂÃ‚Â¡ÃƒÂ§Ã‚Â Ã‚ÂÃƒÂ¨Ã‚Â¾Ã¢â‚¬Å“ÃƒÂ¥Ã¢â‚¬Â¦Ã‚Â¥ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
             )
         }
     }
 
     private fun localizedErrorRecord(): String {
-        return currentLanguage().pick("Error", "错误")
+        return currentLanguage().pick("Error", "ÃƒÂ©Ã¢â‚¬ÂÃ¢â€žÂ¢ÃƒÂ¨Ã‚Â¯Ã‚Â¯")
     }
 
     private fun hasReliableCargoIdentity(
@@ -867,12 +914,12 @@ class AppViewModel(
 class AppViewModelFactory(
     private val repository: PilotRepository,
     private val preferencesRepository: AppPreferencesRepository,
-    private val loadedInspectionTuning: LoadedInspectionTuning,
+    private val startupSnapshot: AppStartupSnapshot,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(AppViewModel::class.java)) {
-            return AppViewModel(repository, preferencesRepository, loadedInspectionTuning) as T
+            return AppViewModel(repository, preferencesRepository, startupSnapshot) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }

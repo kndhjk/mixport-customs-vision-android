@@ -26,6 +26,7 @@ import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.google.android.gms.tasks.Tasks
+import com.google.mlkit.common.MlKit
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.label.ImageLabeler
 import com.google.mlkit.vision.label.ImageLabeling
@@ -50,6 +51,10 @@ class InspectionCameraController(
     private val context: Context,
     private val tuning: InspectionTuningProfile = InspectionTuningProfile.default(),
 ) {
+    init {
+        ensureMlKitInitialized(context.applicationContext)
+    }
+
     private data class CargoVocabularyEntry(
         val label: String,
         val keywords: Set<String>,
@@ -397,13 +402,21 @@ class InspectionCameraController(
         activeRecording?.stop()
     }
 
-    fun release() {
-        activeRecording?.close()
+    fun unbind() {
+        activeRecording?.stop()
+        activeRecording = null
         cameraProvider?.unbindAll()
-        cameraProvider = null
+        boundPreviewView = null
+        boundLifecycleOwner = null
         isBinding = false
         isCameraBound = false
         videoCapture = null
+    }
+
+    fun release() {
+        activeRecording?.close()
+        unbind()
+        cameraProvider = null
         objectDetector?.close()
         objectDetector = null
         imageLabeler?.close()
@@ -905,6 +918,26 @@ class InspectionCameraController(
                         if (first.isLowerCase()) first.titlecase() else first.toString()
                     }
                 }
+        }
+    }
+
+    companion object {
+        @Volatile
+        private var isMlKitInitialized = false
+
+        private val mlKitInitLock = Any()
+
+        private fun ensureMlKitInitialized(context: Context) {
+            if (isMlKitInitialized) {
+                return
+            }
+            synchronized(mlKitInitLock) {
+                if (isMlKitInitialized) {
+                    return
+                }
+                MlKit.initialize(context)
+                isMlKitInitialized = true
+            }
         }
     }
 }

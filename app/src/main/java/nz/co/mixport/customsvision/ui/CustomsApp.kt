@@ -99,21 +99,17 @@ private val BrandTint = Color(0xFFFFF3EB)
 fun CustomsApp(viewModel: AppViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val cameraController = remember(uiState.inspectionTuning) {
-        InspectionCameraController(context, uiState.inspectionTuning)
-    }
     val language = uiState.appLanguage
-
-    DisposableEffect(cameraController) {
-        onDispose {
-            cameraController.release()
-        }
-    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted ->
         viewModel.setCameraPermission(granted)
+    }
+    val requestCameraPermission = remember(permissionLauncher) {
+        {
+            permissionLauncher.launch(Manifest.permission.CAMERA)
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -122,9 +118,6 @@ fun CustomsApp(viewModel: AppViewModel) {
             Manifest.permission.CAMERA,
         ) == PackageManager.PERMISSION_GRANTED
         viewModel.setCameraPermission(granted)
-        if (!granted) {
-            permissionLauncher.launch(Manifest.permission.CAMERA)
-        }
     }
 
     Scaffold(
@@ -211,7 +204,6 @@ fun CustomsApp(viewModel: AppViewModel) {
             AppDestination.LIVE -> LiveScreen(
                 modifier = Modifier.padding(padding),
                 uiState = uiState,
-                cameraController = cameraController,
                 onDismissMessage = viewModel::clearMessages,
                 onContainerCodeChanged = viewModel::updateContainerCode,
                 onVesselNameChanged = viewModel::updateVesselName,
@@ -229,6 +221,7 @@ fun CustomsApp(viewModel: AppViewModel) {
                 onUniversalRecognitionStarted = viewModel::onUniversalRecognitionStarted,
                 onUniversalRecognitionCompleted = viewModel::onUniversalRecognitionCompleted,
                 onUniversalRecognitionError = viewModel::onUniversalRecognitionError,
+                onRequestCameraPermission = requestCameraPermission,
             )
 
             AppDestination.SCANNER -> ScannerScreen(
@@ -236,8 +229,10 @@ fun CustomsApp(viewModel: AppViewModel) {
                 uiState = uiState,
                 onScannerInputChanged = viewModel::updateScannerInput,
                 onScannerVerify = viewModel::verifyScannerBarcode,
+                onScannerPdaDetected = viewModel::onScannerPdaDetected,
                 onScannerAutoVerifyChanged = viewModel::setScannerAutoVerifyEnabled,
                 onScannerSoundChanged = viewModel::setScannerSoundEnabled,
+                onScannerWorkflowModeChanged = viewModel::setScannerWorkflowMode,
                 onScannerHistoryCleared = viewModel::clearScannerHistory,
                 onScannerOnboardingDismissed = viewModel::dismissScannerOnboarding,
             )
@@ -255,7 +250,6 @@ fun CustomsApp(viewModel: AppViewModel) {
 private fun LiveScreen(
     modifier: Modifier = Modifier,
     uiState: LiveInspectionUiState,
-    cameraController: InspectionCameraController,
     onDismissMessage: () -> Unit,
     onContainerCodeChanged: (String) -> Unit,
     onVesselNameChanged: (String) -> Unit,
@@ -273,7 +267,28 @@ private fun LiveScreen(
     onUniversalRecognitionStarted: () -> Unit,
     onUniversalRecognitionCompleted: (nz.co.mixport.customsvision.camera.UniversalRecognitionSnapshot) -> Unit,
     onUniversalRecognitionError: (String) -> Unit,
+    onRequestCameraPermission: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val shouldCreateCameraController = uiState.cameraPermissionGranted && uiState.activeSession != null
+    val cameraController = remember(
+        context,
+        shouldCreateCameraController,
+        uiState.inspectionTuning,
+    ) {
+        if (shouldCreateCameraController) {
+            InspectionCameraController(context, uiState.inspectionTuning)
+        } else {
+            null
+        }
+    }
+
+    DisposableEffect(cameraController) {
+        onDispose {
+            cameraController?.release()
+        }
+    }
+
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -301,6 +316,7 @@ private fun LiveScreen(
                 onRecordingStarted = onRecordingStarted,
                 onRecordingSaved = onRecordingSaved,
                 onRecordingError = onRecordingError,
+                onRequestCameraPermission = onRequestCameraPermission,
             )
         }
         item {
@@ -314,12 +330,22 @@ private fun LiveScreen(
                 uiState = uiState,
                 onCountVisibleDetections = onCountVisibleDetections,
                 onAnalyzeVisibleCargo = {
-                    onUniversalRecognitionStarted()
-                    cameraController.analyzeVisibleCargo(
-                        detections = uiState.liveDetections,
-                        onComplete = onUniversalRecognitionCompleted,
-                        onError = onUniversalRecognitionError,
-                    )
+                    val liveCameraController = cameraController
+                    if (liveCameraController == null) {
+                        onUniversalRecognitionError(
+                            uiState.appLanguage.pick(
+                                "Start a session and wait for the camera to connect before running cargo analysis.",
+                                "请先开始作业并等待相机连接后，再运行货物分析。",
+                            ),
+                        )
+                    } else {
+                        onUniversalRecognitionStarted()
+                        liveCameraController.analyzeVisibleCargo(
+                            detections = uiState.liveDetections,
+                            onComplete = onUniversalRecognitionCompleted,
+                            onError = onUniversalRecognitionError,
+                        )
+                    }
                 },
             )
         }
@@ -730,23 +756,26 @@ private fun TuningProfileCard(uiState: LiveInspectionUiState) {
 @Composable
 private fun CameraCard(
     uiState: LiveInspectionUiState,
-    cameraController: InspectionCameraController,
+    cameraController: InspectionCameraController?,
     onHeartbeat: (Long) -> Unit,
     onDetectionFrame: (LiveDetectionFrame) -> Unit,
     onRecordingStarted: () -> Unit,
     onRecordingSaved: (String) -> Unit,
     onRecordingError: (String) -> Unit,
+    onRequestCameraPermission: () -> Unit,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val activeSession = uiState.activeSession
     val language = uiState.appLanguage
+    val shouldBindCamera = uiState.cameraPermissionGranted && activeSession != null
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
 
-    DisposableEffect(previewView, lifecycleOwner, uiState.cameraPermissionGranted) {
+    DisposableEffect(previewView, lifecycleOwner, shouldBindCamera) {
         val boundPreviewView = previewView
-        if (uiState.cameraPermissionGranted && boundPreviewView != null) {
+        val liveCameraController = cameraController
+        if (shouldBindCamera && boundPreviewView != null && liveCameraController != null) {
             boundPreviewView.post {
-                cameraController.bind(
+                liveCameraController.bind(
                     previewView = boundPreviewView,
                     lifecycleOwner = lifecycleOwner,
                     onFrameHeartbeat = onHeartbeat,
@@ -754,8 +783,12 @@ private fun CameraCard(
                     onError = onRecordingError,
                 )
             }
+        } else {
+            liveCameraController?.unbind()
         }
-        onDispose {}
+        onDispose {
+            liveCameraController?.unbind()
+        }
     }
 
     ElevatedCard {
@@ -773,13 +806,56 @@ private fun CameraCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (!uiState.cameraPermissionGranted) {
-                Text(
-                    text = language.pick(
-                        "Camera permission is required to preview and track cargo.",
-                        "预览和追踪货物前，需要先授予相机权限。",
-                    ),
-                    color = MaterialTheme.colorScheme.error,
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = language.pick(
+                            "Camera permission is only needed when you start live cargo vision on this device.",
+                            "这台设备只有在你真正进入实时货物识别时，才需要相机权限。",
+                        ),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    OutlinedButton(onClick = onRequestCameraPermission) {
+                        Text(language.pick("Grant Camera Permission", "授予相机权限"))
+                    }
+                }
+            } else if (activeSession == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(260.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.CameraAlt,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(42.dp),
+                        )
+                        Text(
+                            text = language.pick(
+                                "Start a session to activate the live camera.",
+                                "先开始作业，再激活实时相机。",
+                            ),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = language.pick(
+                                "This keeps startup light on slower industrial devices and only opens CameraX when the operator is ready.",
+                                "这样可以减轻工业设备的冷启动负担，只在操作员真正开始作业时才打开 CameraX。",
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             } else {
                 Box(
                     modifier = Modifier
@@ -848,11 +924,21 @@ private fun CameraCard(
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(
                     onClick = {
+                        val liveCameraController = cameraController
                         if (uiState.isRecording) {
-                            cameraController.stopRecording()
+                            liveCameraController?.stopRecording()
                         } else if (activeSession != null) {
                             val stamp = activeSession.containerCode.replace(" ", "_")
-                            cameraController.startRecording(
+                            if (liveCameraController == null) {
+                                onRecordingError(
+                                    language.pick(
+                                        "Camera is still preparing. Wait a moment and try again.",
+                                        "相机仍在准备中，请稍等后重试。",
+                                    ),
+                                )
+                                return@Button
+                            }
+                            liveCameraController.startRecording(
                                 displayName = "mixport-customs-$stamp-${System.currentTimeMillis()}",
                                 onSaved = onRecordingSaved,
                                 onError = onRecordingError,
