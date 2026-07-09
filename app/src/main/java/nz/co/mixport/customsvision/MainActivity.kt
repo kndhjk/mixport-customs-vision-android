@@ -36,9 +36,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import nz.co.mixport.customsvision.scanner.PdaHardwareKeyDispatcher
+import nz.co.mixport.customsvision.data.AppLanguage
+import nz.co.mixport.customsvision.data.AppPreferencesRepository
 import nz.co.mixport.customsvision.ui.AppViewModel
 import nz.co.mixport.customsvision.ui.AppViewModelFactory
 import nz.co.mixport.customsvision.ui.CustomsApp
+import nz.co.mixport.customsvision.ui.pick
 import nz.co.mixport.customsvision.ui.theme.MixportCustomsTheme
 
 class MainActivity : ComponentActivity() {
@@ -96,6 +99,9 @@ private sealed interface StartupUiState {
 private fun MainActivityContent(app: CustomsApplication) {
     var retryToken by remember { mutableIntStateOf(0) }
     var startupState by remember(app, retryToken) { mutableStateOf<StartupUiState>(StartupUiState.Loading) }
+    val startupLanguage = remember(app, retryToken) {
+        AppPreferencesRepository(app).getLanguage()
+    }
 
     LaunchedEffect(app, retryToken) {
         startupState = StartupUiState.Loading
@@ -108,7 +114,12 @@ private fun MainActivityContent(app: CustomsApplication) {
         }.fold(
             onSuccess = StartupUiState::Ready,
             onFailure = { throwable ->
-                StartupUiState.Failed(throwable.message ?: "Unable to start Mixport Customs Vision.")
+                StartupUiState.Failed(
+                    throwable.message ?: startupLanguage.pick(
+                        "Unable to start Mixport Customs Vision.",
+                        "无法启动 Mixport Customs Vision。",
+                    ),
+                )
             },
         )
         Log.i(
@@ -118,8 +129,9 @@ private fun MainActivityContent(app: CustomsApplication) {
     }
 
     when (val state = startupState) {
-        StartupUiState.Loading -> StartupLoadingScreen()
+        StartupUiState.Loading -> StartupLoadingScreen(language = startupLanguage)
         is StartupUiState.Failed -> StartupFailureScreen(
+            language = startupLanguage,
             message = state.message,
             onRetry = { retryToken++ },
         )
@@ -140,24 +152,23 @@ private fun MainActivityContent(app: CustomsApplication) {
 private const val STARTUP_TAG = "MixportStartup"
 
 @Composable
-private fun StartupLoadingScreen() {
+private fun StartupLoadingScreen(language: AppLanguage) {
     StartupShell {
         CircularProgressIndicator(color = MaterialTheme.colorScheme.onPrimary)
         Text(
-            text = "Preparing Mixport pilot workspace...",
+            text = language.pick(
+                "Preparing Mixport pilot workspace...",
+                "正在准备 Mixport 试点作业环境...",
+            ),
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onPrimary,
-        )
-        Text(
-            text = "正在准备 Mixport 试点作业环境...",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.82f),
         )
     }
 }
 
 @Composable
 private fun StartupFailureScreen(
+    language: AppLanguage,
     message: String,
     onRetry: () -> Unit,
 ) {
@@ -181,7 +192,7 @@ private fun StartupFailureScreen(
             ),
         ) {
             Text(
-                text = "Retry / 重试",
+                text = language.pick("Retry", "重试"),
                 modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
                 style = MaterialTheme.typography.labelLarge,
             )

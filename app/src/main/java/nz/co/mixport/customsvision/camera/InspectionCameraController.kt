@@ -9,10 +9,12 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Build
 import android.provider.MediaStore
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.TorchState
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.MediaStoreOutputOptions
 import androidx.camera.video.FallbackStrategy
@@ -51,10 +53,6 @@ class InspectionCameraController(
     private val context: Context,
     private val tuning: InspectionTuningProfile = InspectionTuningProfile.default(),
 ) {
-    init {
-        ensureMlKitInitialized(context.applicationContext)
-    }
-
     private data class CargoVocabularyEntry(
         val label: String,
         val keywords: Set<String>,
@@ -211,6 +209,7 @@ class InspectionCameraController(
     private var videoCapture: VideoCapture<Recorder>? = null
     private var activeRecording: Recording? = null
     private var cameraProvider: ProcessCameraProvider? = null
+    private var boundCamera: Camera? = null
     private var boundPreviewView: PreviewView? = null
     private var boundLifecycleOwner: LifecycleOwner? = null
     private var objectDetector: ObjectDetector? = null
@@ -219,18 +218,22 @@ class InspectionCameraController(
     private var chineseTextRecognizer: VisionTextRecognizer? = null
     private var isBinding = false
     private var isCameraBound = false
+    private var isAnalysisBound = false
     @Volatile
     private var isUniversalRecognitionRunning = false
 
     fun bind(
         previewView: PreviewView,
         lifecycleOwner: LifecycleOwner,
+        enableAnalysis: Boolean,
         onFrameHeartbeat: (Long) -> Unit,
         onDetections: (LiveDetectionFrame) -> Unit,
+        onCameraReady: () -> Unit,
         onError: (String) -> Unit,
     ) {
         if (boundPreviewView === previewView &&
             boundLifecycleOwner === lifecycleOwner &&
+            isAnalysisBound == enableAnalysis &&
             (isBinding || isCameraBound)
         ) {
             return
@@ -248,50 +251,96 @@ class InspectionCameraController(
                     val preview = Preview.Builder().build().also {
                         it.setSurfaceProvider(previewView.surfaceProvider)
                     }
-                    val recorder = Recorder.Builder()
-                        .setQualitySelector(
-                            QualitySelector.from(
-                                Quality.SD,
-                                FallbackStrategy.lowerQualityOrHigherThan(Quality.SD),
-                            ),
-                        )
-                        .build()
-                    val nextVideoCapture = VideoCapture.withOutput(recorder)
-                    val imageAnalysis = ImageAnalysis.Builder()
-                        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .build()
-                        .also { analysis ->
-                            analysis.setAnalyzer(
-                                cameraExecutor,
-                                LiveObjectAnalyzer(
-                                    previewView = previewView,
-                                    objectDetector = detector(),
-                                    onFrameHeartbeat = onFrameHeartbeat,
-                                    onDetections = onDetections,
-                                    onError = onError,
+                    val useCases = mutableListOf<androidx.camera.core.UseCase>(preview)
+                    var nextVideoCapture: VideoCapture<Recorder>? = null
+
+                    if (enableAnalysis) {
+                        ensureMlKitInitialized(context.applicationContext)
+                        val recorder = Recorder.Builder()
+                            .setQualitySelector(
+                                QualitySelector.from(
+                                    Quality.SD,
+                                    FallbackStrategy.lowerQualityOrHigherThan(Quality.SD),
                                 ),
                             )
-                        }
+                            .build()
+                        nextVideoCapture = VideoCapture.withOutput(recorder)
+                        val imageAnalysis = ImageAnalysis.Builder()
+                            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                            .build()
+                            .also { analysis ->
+                                analysis.setAnalyzer(
+                                    cameraExecutor,
+                                    LiveObjectAnalyzer(
+                                        previewView = previewView,
+                                        objectDetector = detector(),
+                                        onFrameHeartbeat = onFrameHeartbeat,
+                                        onDetections = onDetections,
+                                        onError = onError,
+                                    ),
+                                )
+                            }
+                        useCases += nextVideoCapture
+                        useCases += imageAnalysis
+                    }
 
                     cameraProvider.unbindAll()
-                    cameraProvider.bindToLifecycle(
+                    val camera = cameraProvider.bindToLifecycle(
                         lifecycleOwner,
                         CameraSelector.DEFAULT_BACK_CAMERA,
-                        preview,
-                        nextVideoCapture,
-                        imageAnalysis,
+                        *useCases.toTypedArray(),
                     )
 
+                    boundCamera = camera
                     videoCapture = nextVideoCapture
                     isCameraBound = true
+                    isAnalysisBound = enableAnalysis
                     isBinding = false
+                    onCameraReady()
                 }.onFailure { throwable ->
                     isBinding = false
                     isCameraBound = false
+                    isAnalysisBound = false
+                    boundCamera = null
                     videoCapture = null
                     onError(throwable.message ?: "Failed to bind the camera.")
                 }
+            },
+            ContextCompat.getMainExecutor(context),
+        )
+    }
+
+    fun hasRearFlashUnit(): Boolean {
+        return boundCamera?.cameraInfo?.hasFlashUnit() == true
+    }
+
+    fun isRearTorchEnabled(): Boolean {
+        return boundCamera?.cameraInfo?.torchState?.value == TorchState.ON
+    }
+
+    fun setRearTorchEnabled(
+        enabled: Boolean,
+        onComplete: (Boolean) -> Unit,
+        onError: (String) -> Unit,
+    ) {
+        val camera = boundCamera
+        if (camera == null || !isCameraBound) {
+            onError("Camera is not ready yet.")
+            return
+        }
+        if (!camera.cameraInfo.hasFlashUnit()) {
+            onError("Rear flash is not available on this device.")
+            return
+        }
+        val torchFuture = camera.cameraControl.enableTorch(enabled)
+        torchFuture.addListener(
+            {
+                runCatching { torchFuture.get() }
+                    .onSuccess { onComplete(camera.cameraInfo.torchState.value == TorchState.ON) }
+                    .onFailure { throwable ->
+                        onError(throwable.message ?: "Unable to switch the rear flash.")
+                    }
             },
             ContextCompat.getMainExecutor(context),
         )
@@ -302,6 +351,7 @@ class InspectionCameraController(
         onComplete: (UniversalRecognitionSnapshot) -> Unit,
         onError: (String) -> Unit,
     ) {
+        ensureMlKitInitialized(context.applicationContext)
         if (isUniversalRecognitionRunning) {
             onError("Visible cargo recognition is already running.")
             return
@@ -405,11 +455,14 @@ class InspectionCameraController(
     fun unbind() {
         activeRecording?.stop()
         activeRecording = null
+        boundCamera?.cameraControl?.enableTorch(false)
         cameraProvider?.unbindAll()
+        boundCamera = null
         boundPreviewView = null
         boundLifecycleOwner = null
         isBinding = false
         isCameraBound = false
+        isAnalysisBound = false
         videoCapture = null
     }
 

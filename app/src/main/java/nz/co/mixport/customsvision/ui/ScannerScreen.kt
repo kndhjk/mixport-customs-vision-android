@@ -222,6 +222,30 @@ fun ScannerScreen(
             }
     }
 
+    LaunchedEffect(language) {
+        pdaStatusMessage = when {
+            !isPdaServiceInstalled -> language.pick(
+                "Hikrobot PDA service is missing on this device.",
+                "当前设备缺少 Hikrobot PDA 服务。",
+            )
+
+            activeHardwareKey != null -> language.pick(
+                "Hold the side scan key to keep scanning. Release it to stop.",
+                "按住侧边扫码键可持续扫描，松开即停止。",
+            )
+
+            isPdaBridgeReady -> language.pick(
+                "Manual FDA mode is ready. Use the side scan keys or tap Trigger once.",
+                "手动 FDA 模式已就绪。使用机身扫码键，或点击“触发一次”。",
+            )
+
+            else -> language.pick(
+                "Connecting to the Hikrobot PDA service...",
+                "正在连接 Hikrobot PDA 服务...",
+            )
+        }
+    }
+
     DisposableEffect(pdaScanController, isPdaServiceInstalled) {
         if (isPdaServiceInstalled) {
             PdaHardwareKeyDispatcher.setHandlers(
@@ -367,9 +391,9 @@ private fun ScannerResultCard(
 ) {
     val resultColor = scannerStatusColor(scanner.lastResult, scanner.isProcessing)
     val liveCode = latestRecord?.scannedBarcode ?: lastPdaBarcode
-    val liveRecord = latestRecord?.databaseRecord
-    val liveStatus = latestRecord?.status
-    val liveSource = latestRecord?.source
+    val liveRecord = latestRecord?.let { localizedScannerDatabaseRecord(language, it.databaseRecord) }
+    val liveStatus = latestRecord?.let { localizedScannerStatusText(language, it.status) }
+    val liveSource = latestRecord?.let { localizedScannerSource(language, it.source) }
 
     Surface(
         shape = RoundedCornerShape(24.dp),
@@ -739,15 +763,15 @@ private fun ScannerHistoryItem(
             }
             ScannerDetailRow(
                 label = language.pick("Database record", "数据库记录"),
-                value = record.databaseRecord,
+                value = localizedScannerDatabaseRecord(language, record.databaseRecord),
             )
             ScannerDetailRow(
                 label = language.pick("Status", "状态"),
-                value = record.status,
+                value = localizedScannerStatusText(language, record.status),
             )
             ScannerDetailRow(
                 label = language.pick("Source", "来源"),
-                value = record.source,
+                value = localizedScannerSource(language, record.source),
             )
             ScannerDetailRow(
                 label = language.pick("Time", "时间"),

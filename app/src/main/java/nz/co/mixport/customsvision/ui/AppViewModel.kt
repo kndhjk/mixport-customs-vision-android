@@ -101,11 +101,7 @@ class AppViewModel(
             inspectionTuning = loadedInspectionTuning.profile,
             mobileVisionProfile = loadedInspectionTuning.mobileVisionProfile,
             inspectionTuningSource = loadedInspectionTuning.sourceDescription,
-            selectedDestination = if (startupSnapshot.pdaScannerAvailable) {
-                AppDestination.SCANNER
-            } else {
-                AppDestination.LIVE
-            },
+            selectedDestination = AppDestination.LIVE,
             scanner = ScannerUiState(
                 isAutoVerifyEnabled = startupSnapshot.scannerAutoVerifyEnabled,
                 isSoundEnabled = startupSnapshot.scannerSoundEnabled,
@@ -127,13 +123,39 @@ class AppViewModel(
     }
 
     fun toggleLanguage() {
-        val nextLanguage = if (_uiState.value.appLanguage == AppLanguage.ENGLISH) {
+        val currentState = _uiState.value
+        val nextLanguage = if (currentState.appLanguage == AppLanguage.ENGLISH) {
             AppLanguage.CHINESE
         } else {
             AppLanguage.ENGLISH
         }
         preferencesRepository.setLanguage(nextLanguage)
-        _uiState.update { it.copy(appLanguage = nextLanguage) }
+        val translatedScannerStatus = when {
+            currentState.scanner.isProcessing -> nextLanguage.pick(
+                "Verifying barcode...",
+                "正在比对序列号...",
+            )
+
+            currentState.scanner.history.isNotEmpty() -> scannerMessageFor(
+                record = currentState.scanner.history.first(),
+                language = nextLanguage,
+            )
+
+            currentState.scanner.lastResult == ScannerMatchStatus.WAITING -> nextLanguage.pick(
+                "Waiting for barcode input.",
+                "等待扫描序列号。",
+            )
+
+            else -> null
+        }
+        _uiState.update {
+            it.copy(
+                appLanguage = nextLanguage,
+                infoMessage = null,
+                errorMessage = null,
+                scanner = it.scanner.copy(statusMessage = translatedScannerStatus),
+            )
+        }
     }
 
     fun setCameraPermission(granted: Boolean) {
@@ -272,8 +294,8 @@ class AppViewModel(
                     scannedBarcode = normalized,
                     databaseRecord = localizedErrorRecord(),
                     matchStatus = ScannerMatchStatus.ERROR,
-                    status = throwable.message ?: currentLanguage().pick("Error", "错误"),
-                    source = "LOCAL",
+                    status = throwable.message?.takeIf(String::isNotBlank) ?: SCANNER_STATUS_ERROR,
+                    source = SCANNER_SOURCE_LOCAL,
                     scannedAt = verifiedAt,
                 )
             }
@@ -392,7 +414,10 @@ class AppViewModel(
                 sessionId = sessionId,
                 workflowState = _uiState.value.workflowState,
                 currentPalletId = _uiState.value.currentPalletId,
-                infoMessage = "Video recording saved.",
+                infoMessage = currentLanguage().pick(
+                    "Video recording saved.",
+                    "录像已保存。",
+                ),
                 isRecording = false,
                 recordingUri = recordingUri,
             )
@@ -400,7 +425,16 @@ class AppViewModel(
     }
 
     fun onRecordingStarted() {
-        _uiState.update { it.copy(isRecording = true, infoMessage = "Recording started.", errorMessage = null) }
+        _uiState.update {
+            it.copy(
+                isRecording = true,
+                infoMessage = it.appLanguage.pick(
+                    "Recording started.",
+                    "已开始录像。",
+                ),
+                errorMessage = null,
+            )
+        }
     }
 
     fun onRecordingError(message: String) {
@@ -824,8 +858,8 @@ class AppViewModel(
                     scannedBarcode = barcode,
                     databaseRecord = localizedErrorRecord(),
                     matchStatus = ScannerMatchStatus.ERROR,
-                    status = currentLanguage().pick("Invalid barcode format", "序列号格式无效"),
-                    source = "LOCAL",
+                    status = SCANNER_STATUS_INVALID_FORMAT,
+                    source = SCANNER_SOURCE_LOCAL,
                     scannedAt = scannedAt,
                 )
             }
@@ -844,10 +878,10 @@ class AppViewModel(
             else -> {
                 ScannerRecord(
                     scannedBarcode = barcode,
-                    databaseRecord = currentLanguage().pick("Not found", "未找到"),
+                    databaseRecord = SCANNER_RECORD_NOT_FOUND,
                     matchStatus = ScannerMatchStatus.MISMATCH,
-                    status = currentLanguage().pick("Unknown", "未知"),
-                    source = "LOCAL",
+                    status = SCANNER_STATUS_UNKNOWN,
+                    source = SCANNER_SOURCE_LOCAL,
                     scannedAt = scannedAt,
                 )
             }
@@ -855,23 +889,30 @@ class AppViewModel(
     }
 
     private fun scannerMessageFor(record: ScannerRecord): String {
+        return scannerMessageFor(record, currentLanguage())
+    }
+
+    private fun scannerMessageFor(
+        record: ScannerRecord,
+        language: AppLanguage,
+    ): String {
         return when (record.matchStatus) {
-            ScannerMatchStatus.MATCHED -> currentLanguage().pick(
+            ScannerMatchStatus.MATCHED -> language.pick(
                 "\"${record.scannedBarcode}\" verified successfully.",
                 "序列号 ${record.scannedBarcode} 已匹配成功。",
             )
 
-            ScannerMatchStatus.MISMATCH -> currentLanguage().pick(
+            ScannerMatchStatus.MISMATCH -> language.pick(
                 "\"${record.scannedBarcode}\" was not found.",
                 "数据库里没有找到序列号 ${record.scannedBarcode}。",
             )
 
-            ScannerMatchStatus.ERROR -> currentLanguage().pick(
+            ScannerMatchStatus.ERROR -> language.pick(
                 "\"${record.scannedBarcode}\" could not be verified.",
                 "序列号 ${record.scannedBarcode} 无法完成校验。",
             )
 
-            ScannerMatchStatus.WAITING -> currentLanguage().pick(
+            ScannerMatchStatus.WAITING -> language.pick(
                 "Waiting for barcode input.",
                 "等待扫描序列号。",
             )
@@ -879,7 +920,7 @@ class AppViewModel(
     }
 
     private fun localizedErrorRecord(): String {
-        return currentLanguage().pick("Error", "错误")
+        return SCANNER_RECORD_ERROR
     }
 
     private fun hasReliableCargoIdentity(
@@ -905,6 +946,12 @@ class AppViewModel(
 
     companion object {
         private val BARCODE_PATTERN = Regex("^[A-Z0-9_\\-/]{6,40}$")
+        private const val SCANNER_SOURCE_LOCAL = "LOCAL"
+        private const val SCANNER_RECORD_NOT_FOUND = "NOT_FOUND"
+        private const val SCANNER_RECORD_ERROR = "ERROR"
+        private const val SCANNER_STATUS_UNKNOWN = "UNKNOWN"
+        private const val SCANNER_STATUS_ERROR = "ERROR"
+        private const val SCANNER_STATUS_INVALID_FORMAT = "INVALID_BARCODE_FORMAT"
         private val GENERIC_CARGO_LABELS = setOf(
             "Tracked cargo",
             "Pallet candidate",

@@ -19,6 +19,9 @@ This repo is for the first pilot company, using the same company server stack la
 
 ### 1. Live customs / unloading workflow
 
+- opens on the `Live` page by default to avoid PDA service startup lag
+- shows the rear-camera preview before a session starts
+- upgrades from preview-only mode to tracking / counting mode after a session starts
 - records unloading sessions and pallet events
 - tracks cargo movement into a pallet workflow
 - keeps local history for sessions, pallets, item summaries, and event logs
@@ -62,7 +65,8 @@ That keeps the pilot safer and makes multi-company rollout possible later throug
 
 ### Standard Android phones
 
-- the `Live` page still uses CameraX for the cargo / pallet camera workflow
+- the `Live` page uses the rear camera and rear flash through CameraX
+- the rear preview can stay live before a session starts, while heavy analysis waits until the operator opens a session
 - the PDA scanner page is only fully functional on supported Hikrobot hardware
 
 ## Build and run
@@ -139,6 +143,7 @@ Reference docs:
 - the PDA scanner workflow depends on the vendor runtime and device firmware
 - sync to the company server is still an API contract and roadmap item, not a production endpoint in this app yet
 - no production secrets are stored in the repo
+- release builds remain pilot-oriented and debug-signed even though GitHub releases are published for field testing
 
 ## Project map
 

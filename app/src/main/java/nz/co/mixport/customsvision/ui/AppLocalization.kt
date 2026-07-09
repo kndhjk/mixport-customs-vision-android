@@ -61,10 +61,44 @@ fun localizedStatus(language: AppLanguage, status: String): String {
 }
 
 fun localizedScannerSource(language: AppLanguage, source: String): String {
-    return when (source.uppercase()) {
+    return when (canonicalScannerValue(source)) {
+        "LOCAL" -> language.pick("Local scanner flow", "本地扫码流程")
         "SESSION" -> language.pick("Container session", "柜号记录")
         "PALLET_ITEM" -> language.pick("Pallet item", "托盘货物")
         else -> source
+    }
+}
+
+fun localizedScannerDatabaseRecord(language: AppLanguage, databaseRecord: String): String {
+    return when (canonicalScannerValue(databaseRecord)) {
+        "NOT_FOUND" -> language.pick("Not found", "未找到")
+        "ERROR" -> language.pick("Error", "错误")
+        else -> localizedCargoLabel(language, databaseRecord)
+    }
+}
+
+fun localizedScannerStatusText(language: AppLanguage, status: String): String {
+    return when (canonicalScannerValue(status)) {
+        "INVALID_BARCODE_FORMAT" -> language.pick("Invalid barcode format", "序列号格式无效")
+        "UNKNOWN" -> language.pick("Unknown", "未知")
+        "ERROR" -> language.pick("Error", "错误")
+        else -> {
+            val separator = when {
+                status.contains("Â·") -> "Â·"
+                status.contains("·") -> "·"
+                else -> null
+            }
+            if (separator == null) {
+                localizedStatus(language, status)
+            } else {
+                val parts = status.split(separator, limit = 2).map(String::trim)
+                if (parts.size == 2) {
+                    "${localizedCargoLabel(language, parts[0])} $separator ${parts[1]}"
+                } else {
+                    localizedStatus(language, status)
+                }
+            }
+        }
     }
 }
 
@@ -74,5 +108,40 @@ fun localizedScannerMatchStatus(language: AppLanguage, status: ScannerMatchStatu
         ScannerMatchStatus.MISMATCH -> language.pick("Not found", "未找到")
         ScannerMatchStatus.ERROR -> language.pick("Error", "错误")
         ScannerMatchStatus.WAITING -> language.pick("Waiting", "等待中")
+    }
+}
+
+private fun canonicalScannerValue(value: String): String {
+    val normalized = value.trim()
+    return when {
+        normalized.equals("LOCAL", ignoreCase = true) ||
+            normalized.equals("Local scanner flow", ignoreCase = true) ||
+            normalized == "本地扫码流程" -> "LOCAL"
+
+        normalized.equals("SESSION", ignoreCase = true) ||
+            normalized.equals("Container session", ignoreCase = true) ||
+            normalized == "柜号记录" -> "SESSION"
+
+        normalized.equals("PALLET_ITEM", ignoreCase = true) ||
+            normalized.equals("Pallet item", ignoreCase = true) ||
+            normalized == "托盘货物" -> "PALLET_ITEM"
+
+        normalized.equals("NOT_FOUND", ignoreCase = true) ||
+            normalized.equals("Not found", ignoreCase = true) ||
+            normalized == "未找到" -> "NOT_FOUND"
+
+        normalized.equals("ERROR", ignoreCase = true) ||
+            normalized.equals("Error", ignoreCase = true) ||
+            normalized == "错误" -> "ERROR"
+
+        normalized.equals("UNKNOWN", ignoreCase = true) ||
+            normalized.equals("Unknown", ignoreCase = true) ||
+            normalized == "未知" -> "UNKNOWN"
+
+        normalized.equals("INVALID_BARCODE_FORMAT", ignoreCase = true) ||
+            normalized.equals("Invalid barcode format", ignoreCase = true) ||
+            normalized == "序列号格式无效" -> "INVALID_BARCODE_FORMAT"
+
+        else -> normalized
     }
 }

@@ -270,7 +270,7 @@ private fun LiveScreen(
     onRequestCameraPermission: () -> Unit,
 ) {
     val context = LocalContext.current
-    val shouldCreateCameraController = uiState.cameraPermissionGranted && uiState.activeSession != null
+    val shouldCreateCameraController = uiState.cameraPermissionGranted
     val cameraController = remember(
         context,
         shouldCreateCameraController,
@@ -767,10 +767,16 @@ private fun CameraCard(
     val lifecycleOwner = LocalLifecycleOwner.current
     val activeSession = uiState.activeSession
     val language = uiState.appLanguage
-    val shouldBindCamera = uiState.cameraPermissionGranted && activeSession != null
+    val shouldBindCamera = uiState.cameraPermissionGranted
+    val analysisEnabled = activeSession != null
+    val liveFeedActive = analysisEnabled && uiState.lastFrameHeartbeatAt != null
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
+    var isPreviewReady by remember(cameraController) { mutableStateOf(false) }
+    var isRearFlashAvailable by remember(cameraController) { mutableStateOf(false) }
+    var isRearFlashEnabled by remember(cameraController) { mutableStateOf(false) }
+    var cameraStatusNote by remember(cameraController, language) { mutableStateOf<String?>(null) }
 
-    DisposableEffect(previewView, lifecycleOwner, shouldBindCamera) {
+    DisposableEffect(previewView, lifecycleOwner, shouldBindCamera, analysisEnabled) {
         val boundPreviewView = previewView
         val liveCameraController = cameraController
         if (shouldBindCamera && boundPreviewView != null && liveCameraController != null) {
@@ -778,16 +784,57 @@ private fun CameraCard(
                 liveCameraController.bind(
                     previewView = boundPreviewView,
                     lifecycleOwner = lifecycleOwner,
+                    enableAnalysis = analysisEnabled,
                     onFrameHeartbeat = onHeartbeat,
                     onDetections = onDetectionFrame,
+                    onCameraReady = {
+                        isPreviewReady = true
+                        isRearFlashAvailable = liveCameraController.hasRearFlashUnit()
+                        isRearFlashEnabled = liveCameraController.isRearTorchEnabled()
+                    },
                     onError = onRecordingError,
                 )
             }
         } else {
+            isPreviewReady = false
             liveCameraController?.unbind()
         }
         onDispose {
+            isPreviewReady = false
             liveCameraController?.unbind()
+        }
+    }
+
+    LaunchedEffect(cameraController, shouldBindCamera, analysisEnabled, liveFeedActive, isPreviewReady, language) {
+        if (!shouldBindCamera || cameraController == null) {
+            isPreviewReady = false
+            isRearFlashAvailable = false
+            isRearFlashEnabled = false
+            cameraStatusNote = null
+            return@LaunchedEffect
+        }
+        isRearFlashAvailable = cameraController.hasRearFlashUnit()
+        isRearFlashEnabled = cameraController.isRearTorchEnabled()
+        cameraStatusNote = when {
+            !isPreviewReady -> language.pick(
+                "Preparing the rear preview...",
+                "正在准备后置预览...",
+            )
+
+            liveFeedActive -> language.pick(
+                "Live view uses the phone's rear camera and rear flash. The Hikvision PDA scanner stays separate on the Scanner tab.",
+                "识别页使用手机后置摄像头和后置闪光灯，海康 PDA 扫码链路仍然只保留在扫码页。",
+            )
+
+            analysisEnabled -> language.pick(
+                "Rear preview is running. Live counting will start as soon as stable objects enter view.",
+                "后置预览已启动，稳定目标进入画面后就会开始实时计数。",
+            )
+
+            else -> language.pick(
+                "Rear preview is live. Start a session when you want tracking, counting, and recording.",
+                "后置预览已启动。需要追踪、计数和录像时再开始作业。",
+            )
         }
     }
 
@@ -816,44 +863,6 @@ private fun CameraCard(
                     )
                     OutlinedButton(onClick = onRequestCameraPermission) {
                         Text(language.pick("Grant Camera Permission", "授予相机权限"))
-                    }
-                }
-            } else if (activeSession == null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(260.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(
-                        modifier = Modifier.padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.CameraAlt,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(42.dp),
-                        )
-                        Text(
-                            text = language.pick(
-                                "Start a session to activate the live camera.",
-                                "先开始作业，再激活实时相机。",
-                            ),
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            text = language.pick(
-                                "This keeps startup light on slower industrial devices and only opens CameraX when the operator is ready.",
-                                "这样可以减轻工业设备的冷启动负担，只在操作员真正开始作业时才打开 CameraX。",
-                            ),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                     }
                 }
             } else {
@@ -885,39 +894,57 @@ private fun CameraCard(
                         modifier = Modifier
                             .align(Alignment.TopStart)
                             .padding(12.dp),
-                        color = if (uiState.lastFrameHeartbeatAt == null) OverlayScrim else CountedGreen.copy(alpha = 0.88f),
+                        color = when {
+                            liveFeedActive -> CountedGreen.copy(alpha = 0.88f)
+                            isPreviewReady -> MaterialTheme.colorScheme.primary.copy(alpha = 0.88f)
+                            else -> OverlayScrim
+                        },
                         shape = RoundedCornerShape(999.dp),
                     ) {
                         Text(
-                            text = if (uiState.lastFrameHeartbeatAt == null) {
-                                language.pick("Connecting camera...", "正在连接相机...")
-                            } else {
-                                language.pick("Live feed active", "实时画面已激活")
+                            text = when {
+                                liveFeedActive -> language.pick("Live feed active", "实时画面已激活")
+                                isPreviewReady -> language.pick("Rear preview active", "后置预览已激活")
+                                else -> language.pick("Connecting camera...", "正在连接相机...")
                             },
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                             color = Color.White,
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
-                    if (uiState.liveDetections.isEmpty()) {
-                        Surface(
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .padding(12.dp),
-                            color = OverlayScrim,
-                            shape = RoundedCornerShape(999.dp),
-                        ) {
-                            Text(
-                                text = if (uiState.lastFrameHeartbeatAt == null) {
-                                    language.pick("Point the camera at the cargo area", "请将镜头对准货物区域")
-                                } else {
-                                    language.pick("No tracked object yet", "暂未跟踪到对象")
-                                },
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                color = Color.White,
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(12.dp),
+                        color = OverlayScrim,
+                        shape = RoundedCornerShape(999.dp),
+                    ) {
+                        Text(
+                            text = when {
+                                !isPreviewReady -> language.pick(
+                                    "Point the rear camera at the cargo area",
+                                    "请将后置镜头对准货物区域",
+                                )
+
+                                !analysisEnabled -> language.pick(
+                                    "Preview only. Start a session to enable tracking and recording.",
+                                    "当前仅预览。开始作业后会启用追踪和录像。",
+                                )
+
+                                uiState.liveDetections.isEmpty() -> language.pick(
+                                    "No tracked object yet",
+                                    "暂未跟踪到对象",
+                                )
+
+                                else -> language.pick(
+                                    "Green boxes are tracking stable cargo candidates.",
+                                    "绿色框正在追踪稳定货物目标。",
+                                )
+                            },
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     }
                 }
             }
@@ -968,17 +995,68 @@ private fun CameraCard(
                     )
                 }
                 FilledTonalButton(
-                    onClick = {},
-                    enabled = activeSession != null,
+                    onClick = {
+                        val liveCameraController = cameraController
+                        if (liveCameraController == null) {
+                            cameraStatusNote = language.pick(
+                                "Rear camera is still preparing.",
+                                "后置相机仍在准备中。",
+                            )
+                            return@FilledTonalButton
+                        }
+                        liveCameraController.setRearTorchEnabled(
+                            enabled = !isRearFlashEnabled,
+                            onComplete = { enabled ->
+                                isRearFlashAvailable = liveCameraController.hasRearFlashUnit()
+                                isRearFlashEnabled = enabled
+                                cameraStatusNote = if (enabled) {
+                                    language.pick(
+                                        "Rear flash enabled for live cargo vision.",
+                                        "已为识别页开启后置闪光灯。",
+                                    )
+                                } else {
+                                    language.pick(
+                                        "Rear flash turned off. The Hikvision PDA light is unaffected.",
+                                        "后置闪光灯已关闭，不影响海康 PDA 的扫码补光灯。",
+                                    )
+                                }
+                            },
+                            onError = {
+                                isRearFlashAvailable = liveCameraController.hasRearFlashUnit()
+                                isRearFlashEnabled = liveCameraController.isRearTorchEnabled()
+                                cameraStatusNote = if (liveCameraController.hasRearFlashUnit()) {
+                                    language.pick(
+                                        "Unable to switch the rear flash right now.",
+                                        "暂时无法切换后置闪光灯。",
+                                    )
+                                } else {
+                                    language.pick(
+                                        "This rear camera does not expose a flash unit.",
+                                        "这台设备的后置相机没有可用闪光灯。",
+                                    )
+                                }
+                            },
+                        )
+                    },
+                    enabled = uiState.cameraPermissionGranted,
                 ) {
                     Text(
-                        if (activeSession == null) {
-                            language.pick("No session", "暂无作业")
+                        if (isRearFlashEnabled) {
+                            language.pick("Rear flash on", "后闪已开")
+                        } else if (isRearFlashAvailable) {
+                            language.pick("Rear flash off", "后闪已关")
                         } else {
-                            language.pick("Tracking live", "实时追踪中")
+                            language.pick("Rear flash", "后置闪光灯")
                         },
                     )
                 }
+            }
+            cameraStatusNote?.let { note ->
+                Text(
+                    text = note,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
