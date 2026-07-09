@@ -52,6 +52,7 @@ The current company stack is PHP + MySQL on Mixport infrastructure. The Android 
 - local capture first
 - future PHP API sync second
 - shared company database behind the API, not inside the mobile app
+- the private backend implementation lives in the companion Mixport website repo under `private-sync/`
 
 That keeps the pilot safer and makes multi-company rollout possible later through config, branding, and API separation.
 
@@ -62,6 +63,7 @@ That keeps the pilot safer and makes multi-company rollout possible later throug
 - the scanner page is built for the PDA's front FDA hardware, not a generic rear phone camera flow
 - the app expects the PDA service package to exist on the device
 - front light and FDA trigger flow are controlled through the vendor broadcast/service bridge already wired in this repo
+- barcode verification is expected to hit `POST /private-sync/barcode/verify` once backend sync is enabled
 
 ### Standard Android phones
 

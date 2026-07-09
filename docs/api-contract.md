@@ -10,7 +10,45 @@ This document describes the server contract for syncing the Android pilot app in
 
 For the pilot, use server-issued bearer tokens tied to a authorized ops account. Do not ship database credentials in the Android app.
 
+The current private PHP implementation also allows an authenticated authorized ops web session for browser-side testing. Bearer tokens can be supplied from either:
+
+- the server environment variable `CUSTOMS_SYNC_BEARER_TOKEN`
+- the private company setting row `private deployment setting row`
+
 ## Endpoints
+
+### `POST /barcode/verify`
+
+Resolve a scanned HBL or child HBL before creating a live unloading session.
+
+Request:
+
+```json
+{
+  "barcode": "VAN1413050612"
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "found": true,
+  "data": {
+    "id": 1284,
+    "parent_hbl_no": "VAN2026061615",
+    "matched_child_hbl": "VAN1413050612",
+    "child_hbls": "VAN1413050612\nVAN1413050054",
+    "matched_by": "child_hbl",
+    "status": "available",
+    "container_no": "MSCU1234567",
+    "vessel_name": "Tauranga Express",
+    "company": "Mixport Pilot",
+    "location": "A-12"
+  }
+}
+```
 
 ### `POST /sessions`
 
@@ -87,6 +125,7 @@ Optional future endpoint returning a pre-signed upload target for long videos if
 ## Recommended PHP placement
 
 - `private-sync/index.php`
+- `private-sync/.htaccess`
 - shared auth bootstrap from the existing Mixport PHP stack
 - MySQL access through the same shared DB connection layer pattern used by `shared/db-connection.php`
 
@@ -97,5 +136,4 @@ Optional future endpoint returning a pre-signed upload target for long videos if
 - event timestamps cannot predate the parent session start time
 - closed sessions cannot accept more pallet updates
 - video references should be immutable once a session is completed
-
 
