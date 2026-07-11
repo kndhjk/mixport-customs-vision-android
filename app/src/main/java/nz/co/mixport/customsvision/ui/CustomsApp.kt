@@ -69,7 +69,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Observer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import nz.co.mixport.customsvision.BuildConfig
 import nz.co.mixport.customsvision.camera.InspectionCameraController
 import nz.co.mixport.customsvision.camera.LiveDetectionFrame
@@ -93,6 +95,7 @@ private val OverlayScrim = Color(0x22000000)
 private val BrandGradientStart = Color(0xFFF45D22)
 private val BrandGradientEnd = Color(0xFFD94D1A)
 private val BrandTint = Color(0xFFFFF3EB)
+private const val ScannerAutoRefreshIntervalMs = 120_000L
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -118,6 +121,21 @@ fun CustomsApp(viewModel: AppViewModel) {
             Manifest.permission.CAMERA,
         ) == PackageManager.PERMISSION_GRANTED
         viewModel.setCameraPermission(granted)
+    }
+
+    LaunchedEffect(
+        uiState.selectedDestination,
+        uiState.scanner.sync.apiBaseUrl,
+        uiState.scanner.sync.bearerToken,
+        uiState.scanner.sync.deviceId,
+    ) {
+        if (uiState.selectedDestination != AppDestination.SCANNER || !uiState.scanner.sync.isConfigured) {
+            return@LaunchedEffect
+        }
+        while (true) {
+            delay(ScannerAutoRefreshIntervalMs)
+            viewModel.refreshScannerReferences(manual = false)
+        }
     }
 
     Scaffold(
@@ -230,11 +248,15 @@ fun CustomsApp(viewModel: AppViewModel) {
                 onScannerInputChanged = viewModel::updateScannerInput,
                 onScannerVerify = viewModel::verifyScannerBarcode,
                 onScannerPdaDetected = viewModel::onScannerPdaDetected,
-                onScannerAutoVerifyChanged = viewModel::setScannerAutoVerifyEnabled,
                 onScannerSoundChanged = viewModel::setScannerSoundEnabled,
                 onScannerWorkflowModeChanged = viewModel::setScannerWorkflowMode,
                 onScannerHistoryCleared = viewModel::clearScannerHistory,
                 onScannerOnboardingDismissed = viewModel::dismissScannerOnboarding,
+                onScannerApiBaseUrlChanged = viewModel::updateScannerApiBaseUrl,
+                onScannerBearerTokenChanged = viewModel::updateScannerBearerToken,
+                onScannerDeviceIdChanged = viewModel::updateScannerDeviceId,
+                onScannerRefreshReferences = viewModel::refreshScannerReferences,
+                onScannerUploadPending = viewModel::uploadPendingScannerScans,
             )
 
             AppDestination.HISTORY -> HistoryScreen(
@@ -429,9 +451,13 @@ private fun PilotHeroCard(uiState: LiveInspectionUiState) {
                             label = {
                                 Text(
                                     if (uiState.cameraPermissionGranted) {
-                                        language.pick("Camera ready", "相机已就绪")
+                                        if (uiState.lastFrameHeartbeatAt != null) {
+                                            language.pick("Live feed", "实时画面")
+                                        } else {
+                                            language.pick("Camera access", "相机权限已开")
+                                        }
                                     } else {
-                                        language.pick("Camera access needed", "需要相机权限")
+                                        language.pick("Need camera", "需要相机")
                                     },
                                 )
                             },
@@ -442,7 +468,7 @@ private fun PilotHeroCard(uiState: LiveInspectionUiState) {
                             onClick = {},
                             label = {
                                 Text(
-                                    uiState.activeSession?.containerCode ?: language.pick("No live session", "暂无作业"),
+                                    uiState.activeSession?.containerCode ?: language.pick("Idle", "待开工"),
                                 )
                             },
                         )
@@ -772,6 +798,7 @@ private fun CameraCard(
     val liveFeedActive = analysisEnabled && uiState.lastFrameHeartbeatAt != null
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
     var isPreviewReady by remember(cameraController) { mutableStateOf(false) }
+    var isPreviewStreaming by remember(cameraController) { mutableStateOf(false) }
     var isRearFlashAvailable by remember(cameraController) { mutableStateOf(false) }
     var isRearFlashEnabled by remember(cameraController) { mutableStateOf(false) }
     var cameraStatusNote by remember(cameraController, language) { mutableStateOf<String?>(null) }
@@ -779,6 +806,13 @@ private fun CameraCard(
     DisposableEffect(previewView, lifecycleOwner, shouldBindCamera, analysisEnabled) {
         val boundPreviewView = previewView
         val liveCameraController = cameraController
+        val streamObserver = boundPreviewView?.let { view ->
+            Observer<PreviewView.StreamState> { state ->
+                isPreviewStreaming = state == PreviewView.StreamState.STREAMING
+            }.also { observer ->
+                view.previewStreamState.observe(lifecycleOwner, observer)
+            }
+        }
         if (shouldBindCamera && boundPreviewView != null && liveCameraController != null) {
             boundPreviewView.post {
                 liveCameraController.bind(
@@ -797,17 +831,23 @@ private fun CameraCard(
             }
         } else {
             isPreviewReady = false
+            isPreviewStreaming = false
             liveCameraController?.unbind()
         }
         onDispose {
+            if (boundPreviewView != null && streamObserver != null) {
+                boundPreviewView.previewStreamState.removeObserver(streamObserver)
+            }
             isPreviewReady = false
+            isPreviewStreaming = false
             liveCameraController?.unbind()
         }
     }
 
-    LaunchedEffect(cameraController, shouldBindCamera, analysisEnabled, liveFeedActive, isPreviewReady, language) {
+    LaunchedEffect(cameraController, shouldBindCamera, analysisEnabled, liveFeedActive, isPreviewStreaming, language) {
         if (!shouldBindCamera || cameraController == null) {
             isPreviewReady = false
+            isPreviewStreaming = false
             isRearFlashAvailable = false
             isRearFlashEnabled = false
             cameraStatusNote = null
@@ -816,9 +856,9 @@ private fun CameraCard(
         isRearFlashAvailable = cameraController.hasRearFlashUnit()
         isRearFlashEnabled = cameraController.isRearTorchEnabled()
         cameraStatusNote = when {
-            !isPreviewReady -> language.pick(
-                "Preparing the rear preview...",
-                "正在准备后置预览...",
+            !isPreviewStreaming -> language.pick(
+                "Starting the rear camera stream...",
+                "正在启动后置相机画面...",
             )
 
             liveFeedActive -> language.pick(
@@ -904,8 +944,8 @@ private fun CameraCard(
                         Text(
                             text = when {
                                 liveFeedActive -> language.pick("Live feed active", "实时画面已激活")
-                                isPreviewReady -> language.pick("Rear preview active", "后置预览已激活")
-                                else -> language.pick("Connecting camera...", "正在连接相机...")
+                                isPreviewStreaming -> language.pick("Rear preview active", "后置预览已激活")
+                                else -> language.pick("Starting rear camera...", "正在启动后置相机...")
                             },
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                             color = Color.White,
@@ -921,9 +961,9 @@ private fun CameraCard(
                     ) {
                         Text(
                             text = when {
-                                !isPreviewReady -> language.pick(
-                                    "Point the rear camera at the cargo area",
-                                    "请将后置镜头对准货物区域",
+                                !isPreviewStreaming -> language.pick(
+                                    "Starting the rear camera stream...",
+                                    "正在启动后置相机画面...",
                                 )
 
                                 !analysisEnabled -> language.pick(
@@ -1832,8 +1872,8 @@ private fun EndpointCard(language: nz.co.mixport.customsvision.data.AppLanguage)
             )
             Text(
                 text = language.pick(
-                    "This Android app is prepared to sync through the same Mixport server stack, but it does not embed database credentials.",
-                    "这个 Android 应用已按 Mixport 同一套服务器体系预留同步能力，但不会把数据库凭据直接写进客户端。",
+                    "The scanner workflow now syncs through the same Mixport server stack, while the app still keeps database credentials out of the client.",
+                    "扫码流程现在已经通过同一套 Mixport 服务器体系同步，但客户端依然不会直接保存数据库凭据。",
                 ),
                 style = MaterialTheme.typography.bodyMedium,
             )

@@ -2,9 +2,11 @@ package nz.co.mixport.customsvision.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.time.Instant
 
 class PilotRepository(
     private val databaseHelper: CustomsDatabaseHelper,
+    private val syncClient: CustomsSyncClient,
 ) {
     suspend fun createSession(draft: SessionDraft): InspectionSessionRecord = withContext(Dispatchers.IO) {
         val startedAt = System.currentTimeMillis()
@@ -81,8 +83,118 @@ class PilotRepository(
             databaseHelper.listEvents(sessionId, limit)
         }
 
-    suspend fun lookupBarcode(barcode: String): BarcodeLookupResult? = withContext(Dispatchers.IO) {
-        databaseHelper.lookupBarcode(barcode)
+    suspend fun lookupBarcode(
+        barcode: String,
+        settings: ScannerSyncSettings? = null,
+    ): BarcodeLookupResult? = withContext(Dispatchers.IO) {
+        val local = databaseHelper.lookupBarcode(barcode)
+        if (local != null) {
+            return@withContext local
+        }
+        if (settings == null || settings.apiBaseUrl.isBlank() || settings.bearerToken.isBlank()) {
+            return@withContext null
+        }
+        runCatching { syncClient.verifyBarcode(settings, barcode) }
+            .getOrNull()
+            ?.also { remote ->
+                remote.takeIf { it.found }
+                    ?.let { found ->
+                        databaseHelper.storeServerBarcodeReferences(
+                            rows = listOf(found.toBootstrapRow(barcode)),
+                            replaceExisting = false,
+                        )
+                    }
+            }
+    }
+
+    suspend fun recordScannerScan(
+        record: ScannerRecord,
+        lookupResult: BarcodeLookupResult?,
+    ) = withContext(Dispatchers.IO) {
+        databaseHelper.recordScannerScan(record, lookupResult)
+    }
+
+    suspend fun refreshScannerReferences(
+        settings: ScannerSyncSettings,
+        lastUploadAt: Long?,
+        lastUploadBatchId: Long?,
+        lastReferenceCursor: String?,
+    ): ScannerReferenceRefreshResult = withContext(Dispatchers.IO) {
+        var cursor = lastReferenceCursor?.trim().orEmpty()
+        var replaceExisting = cursor.isBlank()
+        var syncedAt = System.currentTimeMillis()
+        var page = 0
+        while (page < MAX_BOOTSTRAP_PAGES) {
+            val payload = syncClient.fetchScannerBootstrap(
+                settings = settings,
+                sinceCursor = cursor.takeIf(String::isNotBlank),
+                limit = CustomsSyncClient.DEFAULT_BOOTSTRAP_PAGE_SIZE,
+            )
+            syncedAt = payload.syncedAt
+            if (replaceExisting || payload.rows.isNotEmpty()) {
+                databaseHelper.storeServerBarcodeReferences(payload.rows, replaceExisting = replaceExisting)
+            }
+            replaceExisting = false
+
+            val nextCursor = payload.cursor.trim().ifBlank { cursor }
+            val reachedEnd = payload.rows.isEmpty() ||
+                payload.rows.size < CustomsSyncClient.DEFAULT_BOOTSTRAP_PAGE_SIZE ||
+                nextCursor == cursor
+            cursor = nextCursor
+            if (reachedEnd) {
+                break
+            }
+            page += 1
+        }
+        ScannerReferenceRefreshResult(
+            status = ScannerSyncStatus(
+                referenceCount = databaseHelper.getScannerReferenceCount(),
+                pendingUploadCount = databaseHelper.getPendingScannerUploadCount(),
+                lastReferenceSyncAt = syncedAt,
+                lastUploadAt = lastUploadAt,
+                lastUploadBatchId = lastUploadBatchId,
+            ),
+            cursor = cursor.takeIf(String::isNotBlank),
+        )
+    }
+
+    suspend fun getScannerSyncStatus(
+        lastReferenceSyncAt: Long?,
+        lastUploadAt: Long?,
+        lastUploadBatchId: Long?,
+    ): ScannerSyncStatus = withContext(Dispatchers.IO) {
+        ScannerSyncStatus(
+            referenceCount = databaseHelper.getScannerReferenceCount(),
+            pendingUploadCount = databaseHelper.getPendingScannerUploadCount(),
+            lastReferenceSyncAt = lastReferenceSyncAt,
+            lastUploadAt = lastUploadAt,
+            lastUploadBatchId = lastUploadBatchId,
+        )
+    }
+
+    suspend fun uploadPendingScannerScans(
+        settings: ScannerSyncSettings,
+        operatorName: String,
+        workflowMode: String,
+        lastReferenceSyncAt: Long?,
+    ): ScannerSyncStatus = withContext(Dispatchers.IO) {
+        val pending = databaseHelper.listPendingScannerUploads()
+        if (pending.isEmpty()) {
+            return@withContext getScannerSyncStatus(lastReferenceSyncAt, null, null)
+        }
+        val response = syncClient.uploadScannerRecords(settings, operatorName, workflowMode, pending)
+        databaseHelper.markScannerUploadsSynced(
+            localIds = pending.map { it.id },
+            batchId = response.batchId,
+            uploadedAt = response.uploadedAt,
+        )
+        ScannerSyncStatus(
+            referenceCount = databaseHelper.getScannerReferenceCount(),
+            pendingUploadCount = databaseHelper.getPendingScannerUploadCount(),
+            lastReferenceSyncAt = lastReferenceSyncAt,
+            lastUploadAt = response.uploadedAt,
+            lastUploadBatchId = response.batchId,
+        )
     }
 
     suspend fun updateContainerFlag(sessionId: Long, hasRemainingCargo: Boolean) =
@@ -135,5 +247,38 @@ class PilotRepository(
             payloadJson = """{"status":"$status"}""",
             createdAt = endedAt,
         )
+    }
+
+    private fun BarcodeLookupResult.toBootstrapRow(barcode: String): ScannerBootstrapRow {
+        return ScannerBootstrapRow(
+            barcodeKey = barcode.trim().uppercase(),
+            cargoTrackingId = cargoTrackingId ?: 0L,
+            parentHblNo = parentHblNo ?: databaseRecord,
+            matchedChildHbl = matchedChildHbl.orEmpty(),
+            matchedBy = matchedBy ?: "hbl_no",
+            childHbls = childHbls.orEmpty(),
+            status = status,
+            customersStatus = "",
+            mpiStatus = "",
+            location = location.orEmpty(),
+            pkgs = pkgs,
+            outTurnQty = outTurnQty,
+            submissionDate = submissionDate.orEmpty(),
+            containerNo = containerNo.orEmpty(),
+            vesselName = vesselName.orEmpty(),
+            company = company.orEmpty(),
+            customerName = customerName.orEmpty(),
+            updatedCursor = Instant.now().toString(),
+            serverScanCount = 0,
+            serverMatchedScanCount = 0,
+            serverMismatchScanCount = 0,
+            serverErrorScanCount = 0,
+            serverLastScannedAt = "",
+            serverLastMatchStatus = "",
+        )
+    }
+
+    companion object {
+        private const val MAX_BOOTSTRAP_PAGES = 8
     }
 }

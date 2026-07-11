@@ -6,6 +6,7 @@ Android pilot app for Mixport's container unloading workflow. The app combines:
 - front FDA scanner integration for Hikrobot PDA hardware
 - bilingual English / Chinese UI
 - local evidence capture and offline-first session storage
+- server-backed scanner cache sync with manual batch upload
 
 This repo is for the first pilot company, using the same company server stack later for API sync. The Android client does not connect directly to the production database.
 
@@ -63,7 +64,9 @@ That keeps the pilot safer and makes multi-company rollout possible later throug
 - the scanner page is built for the PDA's front FDA hardware, not a generic rear phone camera flow
 - the app expects the PDA service package to exist on the device
 - front light and FDA trigger flow are controlled through the vendor broadcast/service bridge already wired in this repo
-- barcode verification is expected to hit `POST /private-sync/barcode/verify` once backend sync is enabled
+- the scanner page can now pull HBL cache data from `GET /private-sync/scanner-sync/bootstrap`
+- pending offline scan results can be uploaded manually to `POST /private-sync/scanner-sync/upload`
+- live fallback verification can hit `POST /private-sync/barcode/verify` when a serial is missing from the local cache
 
 ### Standard Android phones
 
@@ -114,6 +117,16 @@ C:\Users\zyzmc\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r .\app
 .\gradlew.bat :app:assembleRelease
 ```
 
+## Scanner sync workflow
+
+1. Open the `Scanner` page.
+2. Enter the Mixport API base URL, bearer token, and device ID once.
+3. Tap `Pull latest cache` to download the active parent / child HBL scanner dataset into local SQLite.
+4. Scan normally even when the network drops; results stay in the local pending queue.
+5. After the unloading/scanning batch is complete, tap `Upload pending` to send the batch back to the Mixport server.
+
+The upload flow is intentionally manual so staff can decide when a completed scanner batch should be written back to the shared company environment.
+
 ## Training-data intake
 
 When real pallet images, wrapped-pallet photos, and container cargo photos are ready, initialize the intake scaffold first:
@@ -143,7 +156,6 @@ Reference docs:
 
 - pallet and cargo recognition are optimized for on-device runtime, but the final custom-trained model is not in the repo yet
 - the PDA scanner workflow depends on the vendor runtime and device firmware
-- sync to the company server is still an API contract and roadmap item, not a production endpoint in this app yet
 - no production secrets are stored in the repo
 - release builds remain pilot-oriented and debug-signed even though GitHub releases are published for field testing
 
@@ -160,6 +172,6 @@ Reference docs:
 1. Train a real pallet / cargo model from the incoming dataset.
 2. Add wrap-completion confirmation from consecutive frames.
 3. Tighten container-empty detection with scene-level evidence.
-4. Implement authenticated API sync to the pilot company server.
+4. Surface uploaded scanner batch summaries directly inside the internal ops cargo dashboards.
 5. Promote release signing from debug signing to a production keystore flow.
 

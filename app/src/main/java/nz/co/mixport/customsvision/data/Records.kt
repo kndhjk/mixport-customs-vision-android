@@ -83,9 +83,61 @@ data class ScannerRecord(
     val scannedAt: Long,
 )
 
+data class ScannerSyncSettings(
+    val apiBaseUrl: String = "",
+    val bearerToken: String = "",
+    val deviceId: String = "",
+)
+
+data class ScannerSyncStatus(
+    val referenceCount: Int = 0,
+    val pendingUploadCount: Int = 0,
+    val lastReferenceSyncAt: Long? = null,
+    val lastUploadAt: Long? = null,
+    val lastUploadBatchId: Long? = null,
+)
+
+data class ScannerReferenceRefreshResult(
+    val status: ScannerSyncStatus,
+    val cursor: String? = null,
+)
+
+data class PendingScannerUploadRecord(
+    val id: Long,
+    val scannedBarcode: String,
+    val databaseRecord: String,
+    val matchStatus: ScannerMatchStatus,
+    val status: String,
+    val source: String,
+    val scannedAt: Long,
+    val cargoTrackingId: Long?,
+    val parentHblNo: String?,
+    val matchedChildHbl: String?,
+    val matchedBy: String?,
+    val childHbls: String?,
+    val containerNo: String?,
+    val vesselName: String?,
+    val company: String?,
+    val customerName: String?,
+    val location: String?,
+)
+
 data class BarcodeLookupResult(
     val found: Boolean,
     val databaseRecord: String,
     val status: String,
     val source: String,
+    val cargoTrackingId: Long? = null,
+    val parentHblNo: String? = null,
+    val matchedChildHbl: String? = null,
+    val matchedBy: String? = null,
+    val childHbls: String? = null,
+    val containerNo: String? = null,
+    val vesselName: String? = null,
+    val company: String? = null,
+    val customerName: String? = null,
+    val location: String? = null,
+    val pkgs: Int? = null,
+    val outTurnQty: Int? = null,
+    val submissionDate: String? = null,
 )

@@ -25,6 +25,7 @@ import nz.co.mixport.customsvision.data.PalletDetail
 import nz.co.mixport.customsvision.data.PilotRepository
 import nz.co.mixport.customsvision.data.ScannerMatchStatus
 import nz.co.mixport.customsvision.data.ScannerRecord
+import nz.co.mixport.customsvision.data.ScannerSyncSettings
 import nz.co.mixport.customsvision.data.SessionDraft
 import nz.co.mixport.customsvision.domain.PalletWorkflowReducer
 import nz.co.mixport.customsvision.domain.SessionPhase
@@ -39,6 +40,23 @@ enum class AppDestination {
     HISTORY,
 }
 
+data class ScannerSyncUiState(
+    val apiBaseUrl: String = "",
+    val bearerToken: String = "",
+    val deviceId: String = "",
+    val referenceCount: Int = 0,
+    val pendingUploadCount: Int = 0,
+    val lastReferenceSyncAt: Long? = null,
+    val lastUploadAt: Long? = null,
+    val lastUploadBatchId: Long? = null,
+    val isRefreshing: Boolean = false,
+    val isUploading: Boolean = false,
+    val statusMessage: String? = null,
+) {
+    val isConfigured: Boolean
+        get() = apiBaseUrl.isNotBlank() && bearerToken.isNotBlank() && deviceId.isNotBlank()
+}
+
 data class ScannerUiState(
     val barcodeInput: String = "",
     val isAutoVerifyEnabled: Boolean = true,
@@ -51,6 +69,7 @@ data class ScannerUiState(
     val history: List<ScannerRecord> = emptyList(),
     val lastProcessedBarcode: String? = null,
     val feedbackNonce: Long = 0L,
+    val sync: ScannerSyncUiState = ScannerSyncUiState(),
 ) {
     val matchedCount: Int
         get() = history.count { it.matchStatus == ScannerMatchStatus.MATCHED }
@@ -94,6 +113,7 @@ class AppViewModel(
     startupSnapshot: AppStartupSnapshot,
 ) : ViewModel() {
     private val loadedInspectionTuning = startupSnapshot.loadedInspectionTuning
+    private val initialScannerRecord = startupSnapshot.scannerHistory.firstOrNull()
     private val reducer = PalletWorkflowReducer()
     private val _uiState = MutableStateFlow(
         LiveInspectionUiState(
@@ -107,7 +127,23 @@ class AppViewModel(
                 isSoundEnabled = startupSnapshot.scannerSoundEnabled,
                 workflowMode = PdaScanWorkflowMode.TRIGGER_ONCE,
                 onboardingDismissed = startupSnapshot.scannerOnboardingDismissed,
+                lastResult = initialScannerRecord?.matchStatus ?: ScannerMatchStatus.WAITING,
+                statusMessage = initialScannerRecord?.let { record ->
+                    scannerMessageFor(record, startupSnapshot.appLanguage)
+                } ?: startupSnapshot.appLanguage.pick(
+                    "Waiting for barcode input.",
+                    "等待扫描序列号。",
+                ),
                 history = startupSnapshot.scannerHistory,
+                lastProcessedBarcode = initialScannerRecord?.scannedBarcode,
+                sync = ScannerSyncUiState(
+                    apiBaseUrl = startupSnapshot.scannerSyncSettings.apiBaseUrl,
+                    bearerToken = startupSnapshot.scannerSyncSettings.bearerToken,
+                    deviceId = startupSnapshot.scannerSyncSettings.deviceId,
+                    lastReferenceSyncAt = preferencesRepository.getScannerLastReferenceSyncAt(),
+                    lastUploadAt = preferencesRepository.getScannerLastUploadAt(),
+                    lastUploadBatchId = preferencesRepository.getScannerLastUploadBatchId(),
+                ),
             ),
         ),
     )
@@ -116,10 +152,14 @@ class AppViewModel(
 
     init {
         refreshHistory()
+        refreshScannerSyncStatus()
     }
 
     fun selectDestination(destination: AppDestination) {
         _uiState.update { it.copy(selectedDestination = destination) }
+        if (destination == AppDestination.SCANNER) {
+            autoRefreshScannerReferences()
+        }
     }
 
     fun toggleLanguage() {
@@ -248,6 +288,196 @@ class AppViewModel(
         }
     }
 
+    fun updateScannerApiBaseUrl(value: String) {
+        preferencesRepository.setScannerApiBaseUrl(value)
+        _uiState.update {
+            it.copy(
+                scanner = it.scanner.copy(
+                    sync = it.scanner.sync.copy(apiBaseUrl = value.trim()),
+                ),
+            )
+        }
+    }
+
+    fun updateScannerBearerToken(value: String) {
+        preferencesRepository.setScannerApiBearerToken(value)
+        _uiState.update {
+            it.copy(
+                scanner = it.scanner.copy(
+                    sync = it.scanner.sync.copy(bearerToken = value.trim()),
+                ),
+            )
+        }
+    }
+
+    fun updateScannerDeviceId(value: String) {
+        preferencesRepository.setScannerDeviceId(value)
+        _uiState.update {
+            it.copy(
+                scanner = it.scanner.copy(
+                    sync = it.scanner.sync.copy(deviceId = value.trim()),
+                ),
+            )
+        }
+    }
+
+    fun refreshScannerReferences(manual: Boolean = true) {
+        val language = currentLanguage()
+        val settings = currentScannerSyncSettings()
+        if (!settings.isValid()) {
+            _uiState.update {
+                it.copy(
+                    scanner = it.scanner.copy(
+                        sync = it.scanner.sync.copy(
+                            statusMessage = language.pick(
+                                "Set the API address, token, and device ID before syncing.",
+                                "请先填写 API 地址、令牌和设备 ID，再同步。",
+                            ),
+                        ),
+                    ),
+                )
+            }
+            return
+        }
+        if (_uiState.value.scanner.sync.isRefreshing) {
+            return
+        }
+        _uiState.update {
+            it.copy(
+                scanner = it.scanner.copy(
+                    sync = it.scanner.sync.copy(
+                        isRefreshing = true,
+                        statusMessage = language.pick(
+                            if (manual) "Downloading the latest HBL cache..." else "Refreshing live scanner cache...",
+                            if (manual) "正在下载最新 HBL 缓存..." else "正在刷新在线扫码缓存...",
+                        ),
+                    ),
+                ),
+            )
+        }
+        viewModelScope.launch {
+            runCatching {
+                repository.refreshScannerReferences(
+                    settings = settings,
+                    lastUploadAt = preferencesRepository.getScannerLastUploadAt(),
+                    lastUploadBatchId = preferencesRepository.getScannerLastUploadBatchId(),
+                    lastReferenceCursor = preferencesRepository.getScannerLastReferenceCursor(),
+                )
+            }.onSuccess { result ->
+                preferencesRepository.setScannerLastReferenceSyncAt(result.status.lastReferenceSyncAt)
+                preferencesRepository.setScannerLastReferenceCursor(result.cursor)
+                applyScannerSyncStatus(
+                    status = result.status,
+                    statusMessage = currentLanguage().pick(
+                        "Scanner cache updated. ${result.status.referenceCount} scan records are ready offline.",
+                        "扫码缓存已更新，可离线使用 ${result.status.referenceCount} 条记录。",
+                    ),
+                    isRefreshing = false,
+                )
+            }.onFailure { throwable ->
+                _uiState.update {
+                    it.copy(
+                        scanner = it.scanner.copy(
+                            sync = it.scanner.sync.copy(
+                                isRefreshing = false,
+                                statusMessage = throwable.message ?: currentLanguage().pick(
+                                    "Unable to refresh scanner cache.",
+                                    "无法刷新扫码缓存。",
+                                ),
+                            ),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun uploadPendingScannerScans() {
+        val language = currentLanguage()
+        val settings = currentScannerSyncSettings()
+        if (_uiState.value.scanner.sync.pendingUploadCount <= 0) {
+            _uiState.update {
+                it.copy(
+                    scanner = it.scanner.copy(
+                        sync = it.scanner.sync.copy(
+                            statusMessage = language.pick(
+                                "There are no pending scanner results to upload.",
+                                "当前没有待上传的扫码结果。",
+                            ),
+                        ),
+                    ),
+                )
+            }
+            return
+        }
+        if (!settings.isValid()) {
+            _uiState.update {
+                it.copy(
+                    scanner = it.scanner.copy(
+                        sync = it.scanner.sync.copy(
+                            statusMessage = language.pick(
+                                "Set the API address, token, and device ID before uploading.",
+                                "请先填写 API 地址、令牌和设备 ID，再上传。",
+                            ),
+                        ),
+                    ),
+                )
+            }
+            return
+        }
+        if (_uiState.value.scanner.sync.isUploading) {
+            return
+        }
+        _uiState.update {
+            it.copy(
+                scanner = it.scanner.copy(
+                    sync = it.scanner.sync.copy(
+                        isUploading = true,
+                        statusMessage = language.pick(
+                            "Uploading pending scanner results to Mixport...",
+                            "正在把待上传扫码结果提交到 Mixport...",
+                        ),
+                    ),
+                ),
+            )
+        }
+        viewModelScope.launch {
+            runCatching {
+                repository.uploadPendingScannerScans(
+                    settings = settings,
+                    operatorName = activeOperatorName(),
+                    workflowMode = _uiState.value.scanner.workflowMode.name,
+                    lastReferenceSyncAt = preferencesRepository.getScannerLastReferenceSyncAt(),
+                )
+            }.onSuccess { status ->
+                preferencesRepository.setScannerLastUploadAt(status.lastUploadAt)
+                preferencesRepository.setScannerLastUploadBatchId(status.lastUploadBatchId)
+                applyScannerSyncStatus(
+                    status = status,
+                    statusMessage = currentLanguage().pick(
+                        "Scanner results uploaded. Batch #${status.lastUploadBatchId ?: 0} is now on the server.",
+                        "扫码结果已上传，批次 #${status.lastUploadBatchId ?: 0} 已写入服务器。",
+                    ),
+                    isUploading = false,
+                )
+            }.onFailure { throwable ->
+                _uiState.update {
+                    it.copy(
+                        scanner = it.scanner.copy(
+                            sync = it.scanner.sync.copy(
+                                isUploading = false,
+                                statusMessage = throwable.message ?: currentLanguage().pick(
+                                    "Unable to upload scanner results.",
+                                    "无法上传扫码结果。",
+                                ),
+                            ),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
     fun verifyScannerBarcode(barcode: String = _uiState.value.scanner.barcodeInput) {
         val normalized = barcode.trim().uppercase()
         if (normalized.isBlank()) {
@@ -283,10 +513,11 @@ class AppViewModel(
 
         viewModelScope.launch {
             val verifiedAt = System.currentTimeMillis()
+            val lookupResult = runCatching { lookupBarcode(normalized) }.getOrNull()
             val record = runCatching {
                 buildScannerRecord(
                     barcode = normalized,
-                    lookupResult = lookupBarcode(normalized),
+                    lookupResult = lookupResult,
                     scannedAt = verifiedAt,
                 )
             }.getOrElse { throwable ->
@@ -299,11 +530,17 @@ class AppViewModel(
                     scannedAt = verifiedAt,
                 )
             }
+            repository.recordScannerScan(record, lookupResult)
 
             val updatedHistory = listOf(record) + _uiState.value.scanner.history
                 .filterNot { it.scannedBarcode == record.scannedBarcode && it.scannedAt == record.scannedAt }
                 .take(59)
             preferencesRepository.setScannerHistory(updatedHistory)
+            val syncStatus = repository.getScannerSyncStatus(
+                lastReferenceSyncAt = preferencesRepository.getScannerLastReferenceSyncAt(),
+                lastUploadAt = preferencesRepository.getScannerLastUploadAt(),
+                lastUploadBatchId = preferencesRepository.getScannerLastUploadBatchId(),
+            )
 
             _uiState.update {
                 it.copy(
@@ -315,6 +552,13 @@ class AppViewModel(
                         history = updatedHistory,
                         lastProcessedBarcode = record.scannedBarcode,
                         feedbackNonce = it.scanner.feedbackNonce + 1,
+                        sync = it.scanner.sync.copy(
+                            referenceCount = syncStatus.referenceCount,
+                            pendingUploadCount = syncStatus.pendingUploadCount,
+                            lastReferenceSyncAt = syncStatus.lastReferenceSyncAt,
+                            lastUploadAt = syncStatus.lastUploadAt,
+                            lastUploadBatchId = syncStatus.lastUploadBatchId,
+                        ),
                     ),
                 )
             }
@@ -844,7 +1088,7 @@ class AppViewModel(
         if (!BARCODE_PATTERN.matches(barcode)) {
             return null
         }
-        return repository.lookupBarcode(barcode)
+        return repository.lookupBarcode(barcode, currentScannerSyncSettings())
     }
 
     private fun buildScannerRecord(
@@ -923,6 +1167,72 @@ class AppViewModel(
         return SCANNER_RECORD_ERROR
     }
 
+    private fun refreshScannerSyncStatus() {
+        viewModelScope.launch {
+            val status = repository.getScannerSyncStatus(
+                lastReferenceSyncAt = preferencesRepository.getScannerLastReferenceSyncAt(),
+                lastUploadAt = preferencesRepository.getScannerLastUploadAt(),
+                lastUploadBatchId = preferencesRepository.getScannerLastUploadBatchId(),
+            )
+            applyScannerSyncStatus(
+                status = status,
+                statusMessage = _uiState.value.scanner.sync.statusMessage,
+            )
+        }
+    }
+
+    private fun applyScannerSyncStatus(
+        status: nz.co.mixport.customsvision.data.ScannerSyncStatus,
+        statusMessage: String?,
+        isRefreshing: Boolean = false,
+        isUploading: Boolean = false,
+    ) {
+        _uiState.update {
+            it.copy(
+                scanner = it.scanner.copy(
+                    sync = it.scanner.sync.copy(
+                        referenceCount = status.referenceCount,
+                        pendingUploadCount = status.pendingUploadCount,
+                        lastReferenceSyncAt = status.lastReferenceSyncAt,
+                        lastUploadAt = status.lastUploadAt,
+                        lastUploadBatchId = status.lastUploadBatchId,
+                        isRefreshing = isRefreshing,
+                        isUploading = isUploading,
+                        statusMessage = statusMessage,
+                    ),
+                ),
+            )
+        }
+    }
+
+    private fun autoRefreshScannerReferences() {
+        val sync = _uiState.value.scanner.sync
+        if (!sync.isConfigured || sync.isRefreshing || sync.isUploading) {
+            return
+        }
+        val lastSyncAt = sync.lastReferenceSyncAt ?: 0L
+        if (System.currentTimeMillis() - lastSyncAt < SCANNER_REFERENCE_REFRESH_INTERVAL_MS) {
+            return
+        }
+        refreshScannerReferences(manual = false)
+    }
+
+    private fun currentScannerSyncSettings(): ScannerSyncSettings {
+        val sync = _uiState.value.scanner.sync
+        return ScannerSyncSettings(
+            apiBaseUrl = sync.apiBaseUrl,
+            bearerToken = sync.bearerToken,
+            deviceId = sync.deviceId,
+        )
+    }
+
+    private fun activeOperatorName(): String {
+        return _uiState.value.activeSession?.operatorName
+            ?.takeIf(String::isNotBlank)
+            ?: _uiState.value.draft.operatorName.takeIf(String::isNotBlank)
+            ?: "Scanner Operator"
+    }
+
     private fun hasReliableCargoIdentity(
         detection: LiveRecognition,
         recognition: nz.co.mixport.customsvision.camera.UniversalRecognition?,
@@ -944,8 +1254,13 @@ class AppViewModel(
 
     private fun currentLanguage(): AppLanguage = _uiState.value.appLanguage
 
+    private fun ScannerSyncSettings.isValid(): Boolean {
+        return apiBaseUrl.isNotBlank() && bearerToken.isNotBlank() && deviceId.isNotBlank()
+    }
+
     companion object {
         private val BARCODE_PATTERN = Regex("^[A-Z0-9_\\-/]{6,40}$")
+        private const val SCANNER_REFERENCE_REFRESH_INTERVAL_MS = 120_000L
         private const val SCANNER_SOURCE_LOCAL = "LOCAL"
         private const val SCANNER_RECORD_NOT_FOUND = "NOT_FOUND"
         private const val SCANNER_RECORD_ERROR = "ERROR"

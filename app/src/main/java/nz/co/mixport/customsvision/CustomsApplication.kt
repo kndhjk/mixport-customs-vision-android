@@ -5,6 +5,7 @@ import android.os.SystemClock
 import android.util.Log
 import nz.co.mixport.customsvision.data.AppPreferencesRepository
 import nz.co.mixport.customsvision.data.AppStartupSnapshot
+import nz.co.mixport.customsvision.data.CustomsSyncClient
 import nz.co.mixport.customsvision.data.CustomsDatabaseHelper
 import nz.co.mixport.customsvision.data.InspectionTuningLoader
 import nz.co.mixport.customsvision.data.PilotRepository
@@ -44,7 +45,10 @@ class CustomsApplication : Application() {
         val preferencesRepository = AppPreferencesRepository(this)
         val loadedInspectionTuning = InspectionTuningLoader(this).load()
         return AppBootstrapPayload(
-            repository = PilotRepository(CustomsDatabaseHelper(this)),
+            repository = PilotRepository(
+                databaseHelper = CustomsDatabaseHelper(this),
+                syncClient = CustomsSyncClient(),
+            ),
             preferencesRepository = preferencesRepository,
             startupSnapshot = AppStartupSnapshot(
                 appLanguage = preferencesRepository.getLanguage(),
@@ -55,6 +59,7 @@ class CustomsApplication : Application() {
                 scannerWorkflowMode = PdaScanWorkflowMode.TRIGGER_ONCE,
                 scannerOnboardingDismissed = preferencesRepository.isScannerOnboardingDismissed(),
                 scannerHistory = preferencesRepository.getScannerHistory(),
+                scannerSyncSettings = preferencesRepository.getScannerSyncSettings(),
             ),
         )
     }

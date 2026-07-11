@@ -42,6 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -71,11 +72,15 @@ fun ScannerScreen(
     onScannerInputChanged: (String) -> Unit,
     onScannerVerify: (String) -> Unit,
     onScannerPdaDetected: (String, String) -> Unit,
-    onScannerAutoVerifyChanged: (Boolean) -> Unit,
     onScannerSoundChanged: (Boolean) -> Unit,
     onScannerWorkflowModeChanged: (PdaScanWorkflowMode) -> Unit,
     onScannerHistoryCleared: () -> Unit,
     onScannerOnboardingDismissed: () -> Unit,
+    onScannerApiBaseUrlChanged: (String) -> Unit,
+    onScannerBearerTokenChanged: (String) -> Unit,
+    onScannerDeviceIdChanged: (String) -> Unit,
+    onScannerRefreshReferences: (Boolean) -> Unit,
+    onScannerUploadPending: () -> Unit,
 ) {
     val language = uiState.appLanguage
     val scanner = uiState.scanner
@@ -325,6 +330,17 @@ fun ScannerScreen(
             )
         }
         item {
+            ScannerSyncCard(
+                language = language,
+                scanner = scanner,
+                onApiBaseUrlChanged = onScannerApiBaseUrlChanged,
+                onBearerTokenChanged = onScannerBearerTokenChanged,
+                onDeviceIdChanged = onScannerDeviceIdChanged,
+                onRefreshReferences = { onScannerRefreshReferences(true) },
+                onUploadPending = onScannerUploadPending,
+            )
+        }
+        item {
             ScannerTriggerCard(
                 language = language,
                 scanner = scanner,
@@ -523,6 +539,135 @@ private fun ScannerResultCard(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ScannerSyncCard(
+    language: AppLanguage,
+    scanner: ScannerUiState,
+    onApiBaseUrlChanged: (String) -> Unit,
+    onBearerTokenChanged: (String) -> Unit,
+    onDeviceIdChanged: (String) -> Unit,
+    onRefreshReferences: () -> Unit,
+    onUploadPending: () -> Unit,
+) {
+    val sync = scanner.sync
+    ElevatedCard {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(
+                text = language.pick("Server Sync", "服务器同步"),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = language.pick(
+                    "Pull the latest HBL scanner cache from the Mixport server, keep scanning offline, then upload the completed result batch manually.",
+                    "先从 Mixport 服务器拉取最新 HBL 扫码缓存，离线继续扫描，全部完成后再由工作人员手动上传结果批次。",
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ScannerMiniStat(
+                    label = language.pick("Cache", "缓存"),
+                    value = sync.referenceCount.toString(),
+                    color = if (sync.referenceCount > 0) ScannerOk else ScannerWarn,
+                )
+                ScannerMiniStat(
+                    label = language.pick("Pending", "待上传"),
+                    value = sync.pendingUploadCount.toString(),
+                    color = if (sync.pendingUploadCount > 0) ScannerWarn else ScannerIdle,
+                )
+            }
+
+            OutlinedTextField(
+                value = sync.apiBaseUrl,
+                onValueChange = onApiBaseUrlChanged,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(language.pick("API base URL", "API 地址")) },
+                singleLine = true,
+                enabled = !sync.isRefreshing && !sync.isUploading,
+            )
+            OutlinedTextField(
+                value = sync.bearerToken,
+                onValueChange = onBearerTokenChanged,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(language.pick("Bearer token", "Bearer 令牌")) },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                enabled = !sync.isRefreshing && !sync.isUploading,
+            )
+            OutlinedTextField(
+                value = sync.deviceId,
+                onValueChange = onDeviceIdChanged,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(language.pick("Device ID", "设备 ID")) },
+                singleLine = true,
+                enabled = !sync.isRefreshing && !sync.isUploading,
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Button(
+                    onClick = onRefreshReferences,
+                    enabled = !sync.isRefreshing && !sync.isUploading,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(
+                        if (sync.isRefreshing) {
+                            language.pick("Refreshing...", "刷新中...")
+                        } else {
+                            language.pick("Pull latest cache", "拉取最新缓存")
+                        },
+                    )
+                }
+                FilledTonalButton(
+                    onClick = onUploadPending,
+                    enabled = !sync.isRefreshing && !sync.isUploading && sync.pendingUploadCount > 0,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(
+                        if (sync.isUploading) {
+                            language.pick("Uploading...", "上传中...")
+                        } else {
+                            language.pick("Upload pending", "上传待处理")
+                        },
+                    )
+                }
+            }
+
+            sync.statusMessage?.let { message ->
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            val syncTime = sync.lastReferenceSyncAt?.let(::formatTimestamp)
+                ?: language.pick("Not synced yet", "尚未同步")
+            val uploadTime = sync.lastUploadAt?.let(::formatTimestamp)
+                ?: language.pick("No upload yet", "尚未上传")
+            ScannerDetailRow(
+                label = language.pick("Last cache sync", "上次缓存同步"),
+                value = syncTime,
+            )
+            ScannerDetailRow(
+                label = language.pick("Last manual upload", "上次手动上传"),
+                value = if (sync.lastUploadBatchId != null) {
+                    "$uploadTime · #${sync.lastUploadBatchId}"
+                } else {
+                    uploadTime
+                },
+            )
         }
     }
 }

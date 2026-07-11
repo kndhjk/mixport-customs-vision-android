@@ -11,4 +11,5 @@ data class AppStartupSnapshot(
     val scannerWorkflowMode: PdaScanWorkflowMode,
     val scannerOnboardingDismissed: Boolean,
     val scannerHistory: List<ScannerRecord>,
+    val scannerSyncSettings: ScannerSyncSettings,
 )

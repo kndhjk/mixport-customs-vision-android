@@ -19,74 +19,14 @@ class CustomsDatabaseHelper(context: Context) :
     }
 
     override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE inspection_session (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                container_code TEXT NOT NULL,
-                vessel_name TEXT NOT NULL,
-                operator_name TEXT NOT NULL,
-                notes TEXT NOT NULL,
-                status TEXT NOT NULL,
-                started_at INTEGER NOT NULL,
-                ended_at INTEGER,
-                recording_uri TEXT,
-                container_has_remaining_cargo INTEGER NOT NULL DEFAULT 1
-            )
-            """.trimIndent(),
-        )
-        db.execSQL(
-            """
-            CREATE TABLE pallet (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id INTEGER NOT NULL,
-                sequence_number INTEGER NOT NULL,
-                status TEXT NOT NULL,
-                started_at INTEGER NOT NULL,
-                closed_at INTEGER,
-                wrap_detected INTEGER NOT NULL DEFAULT 0,
-                container_empty_at_close INTEGER NOT NULL DEFAULT 0,
-                FOREIGN KEY(session_id) REFERENCES inspection_session(id) ON DELETE CASCADE
-            )
-            """.trimIndent(),
-        )
-        db.execSQL(
-            """
-            CREATE TABLE pallet_item_summary (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                pallet_id INTEGER NOT NULL,
-                item_label TEXT NOT NULL,
-                color_name TEXT NOT NULL,
-                marker_text TEXT NOT NULL,
-                quantity INTEGER NOT NULL,
-                FOREIGN KEY(pallet_id) REFERENCES pallet(id) ON DELETE CASCADE,
-                UNIQUE(pallet_id, item_label, color_name, marker_text)
-            )
-            """.trimIndent(),
-        )
-        db.execSQL(
-            """
-            CREATE TABLE event_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id INTEGER NOT NULL,
-                pallet_id INTEGER,
-                event_type TEXT NOT NULL,
-                message TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                FOREIGN KEY(session_id) REFERENCES inspection_session(id) ON DELETE CASCADE,
-                FOREIGN KEY(pallet_id) REFERENCES pallet(id) ON DELETE SET NULL
-            )
-            """.trimIndent(),
-        )
+        createCoreTables(db)
+        createScannerSyncTables(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL("DROP TABLE IF EXISTS event_log")
-        db.execSQL("DROP TABLE IF EXISTS pallet_item_summary")
-        db.execSQL("DROP TABLE IF EXISTS pallet")
-        db.execSQL("DROP TABLE IF EXISTS inspection_session")
-        onCreate(db)
+        if (oldVersion < 2) {
+            createScannerSyncTables(db)
+        }
     }
 
     fun createSession(draft: SessionDraft, startedAt: Long): InspectionSessionRecord {
@@ -147,6 +87,22 @@ class CustomsDatabaseHelper(context: Context) :
             return null
         }
 
+        val referenceCursor = readableDatabase.query(
+            "server_barcode_reference",
+            null,
+            "barcode_key = ?",
+            arrayOf(normalized),
+            null,
+            null,
+            null,
+            "1",
+        )
+        referenceCursor.use { cursor ->
+            if (cursor.moveToFirst()) {
+                return cursor.toServerBarcodeLookupResult()
+            }
+        }
+
         val sessionCursor = readableDatabase.query(
             "inspection_session",
             arrayOf("container_code", "status"),
@@ -190,7 +146,7 @@ class CustomsDatabaseHelper(context: Context) :
                 return BarcodeLookupResult(
                     found = true,
                     databaseRecord = markerText.ifBlank { itemLabel },
-                    status = "$itemLabel · $containerCode",
+                    status = "$itemLabel | $containerCode",
                     source = "PALLET_ITEM",
                 )
             }
@@ -407,6 +363,129 @@ class CustomsDatabaseHelper(context: Context) :
         }
     }
 
+    fun storeServerBarcodeReferences(
+        rows: List<ScannerBootstrapRow>,
+        replaceExisting: Boolean = true,
+    ) {
+        val db = writableDatabase
+        db.transaction {
+            if (replaceExisting) {
+                delete("server_barcode_reference", null, null)
+            }
+            rows.forEach { row ->
+                insertWithOnConflict(
+                    "server_barcode_reference",
+                    null,
+                    contentValuesOf(
+                        "barcode_key" to row.barcodeKey.trim().uppercase(),
+                        "cargo_tracking_id" to row.cargoTrackingId,
+                        "parent_hbl_no" to row.parentHblNo,
+                        "matched_child_hbl" to row.matchedChildHbl,
+                        "matched_by" to row.matchedBy,
+                        "child_hbls" to row.childHbls,
+                        "status" to row.status,
+                        "customers_status" to row.customersStatus,
+                        "mpi_status" to row.mpiStatus,
+                        "location" to row.location,
+                        "pkgs" to row.pkgs,
+                        "out_turn_qty" to row.outTurnQty,
+                        "submission_date" to row.submissionDate,
+                        "container_no" to row.containerNo,
+                        "vessel_name" to row.vesselName,
+                        "company" to row.company,
+                        "customer_name" to row.customerName,
+                        "updated_cursor" to row.updatedCursor,
+                        "server_scan_count" to row.serverScanCount,
+                        "server_matched_scan_count" to row.serverMatchedScanCount,
+                        "server_mismatch_scan_count" to row.serverMismatchScanCount,
+                        "server_error_scan_count" to row.serverErrorScanCount,
+                        "server_last_scanned_at" to row.serverLastScannedAt,
+                        "server_last_match_status" to row.serverLastMatchStatus,
+                    ),
+                    SQLiteDatabase.CONFLICT_REPLACE,
+                )
+            }
+        }
+    }
+
+    fun recordScannerScan(record: ScannerRecord, lookupResult: BarcodeLookupResult?) {
+        writableDatabase.insertOrThrow(
+            "scanner_scan_log",
+            null,
+            ContentValues().apply {
+                put("scanned_barcode", record.scannedBarcode)
+                put("database_record", record.databaseRecord)
+                put("match_status", record.matchStatus.name)
+                put("status_text", record.status)
+                put("source", record.source)
+                put("scanned_at", record.scannedAt)
+                put("cargo_tracking_id", lookupResult?.cargoTrackingId)
+                put("parent_hbl_no", lookupResult?.parentHblNo)
+                put("matched_child_hbl", lookupResult?.matchedChildHbl)
+                put("matched_by", lookupResult?.matchedBy)
+                put("child_hbls", lookupResult?.childHbls)
+                put("container_no", lookupResult?.containerNo)
+                put("vessel_name", lookupResult?.vesselName)
+                put("company", lookupResult?.company)
+                put("customer_name", lookupResult?.customerName)
+                put("location", lookupResult?.location)
+                put("sync_state", "PENDING")
+            },
+        )
+    }
+
+    fun listPendingScannerUploads(limit: Int = 500): List<PendingScannerUploadRecord> {
+        val cursor = readableDatabase.query(
+            "scanner_scan_log",
+            null,
+            "sync_state = ?",
+            arrayOf("PENDING"),
+            null,
+            null,
+            "scanned_at ASC",
+            limit.toString(),
+        )
+        return cursor.use {
+            buildList {
+                while (it.moveToNext()) {
+                    add(it.toPendingScannerUploadRecord())
+                }
+            }
+        }
+    }
+
+    fun markScannerUploadsSynced(localIds: List<Long>, batchId: Long, uploadedAt: Long) {
+        if (localIds.isEmpty()) {
+            return
+        }
+        val placeholders = localIds.joinToString(",") { "?" }
+        val statement = writableDatabase.compileStatement(
+            "UPDATE scanner_scan_log SET sync_state='SYNCED', uploaded_batch_id=?, uploaded_at=? WHERE id IN ($placeholders)",
+        )
+        statement.bindLong(1, batchId)
+        statement.bindLong(2, uploadedAt)
+        localIds.forEachIndexed { index, localId ->
+            statement.bindLong(index + 3, localId)
+        }
+        statement.executeUpdateDelete()
+        statement.close()
+    }
+
+    fun getScannerReferenceCount(): Int {
+        return readableDatabase.rawQuery("SELECT COUNT(*) FROM server_barcode_reference", null).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getInt(0) else 0
+        }
+    }
+
+    fun getPendingScannerUploadCount(): Int {
+        return readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM scanner_scan_log WHERE sync_state = 'PENDING'",
+            null,
+        ).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getInt(0) else 0
+        }
+    }
+
     private fun getEvent(eventId: Long): EventLogRecord? {
         val cursor = readableDatabase.query(
             "event_log",
@@ -424,6 +503,128 @@ class CustomsDatabaseHelper(context: Context) :
                 null
             }
         }
+    }
+
+    private fun createCoreTables(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE inspection_session (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                container_code TEXT NOT NULL,
+                vessel_name TEXT NOT NULL,
+                operator_name TEXT NOT NULL,
+                notes TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at INTEGER NOT NULL,
+                ended_at INTEGER,
+                recording_uri TEXT,
+                container_has_remaining_cargo INTEGER NOT NULL DEFAULT 1
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TABLE pallet (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                sequence_number INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                started_at INTEGER NOT NULL,
+                closed_at INTEGER,
+                wrap_detected INTEGER NOT NULL DEFAULT 0,
+                container_empty_at_close INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(session_id) REFERENCES inspection_session(id) ON DELETE CASCADE
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TABLE pallet_item_summary (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pallet_id INTEGER NOT NULL,
+                item_label TEXT NOT NULL,
+                color_name TEXT NOT NULL,
+                marker_text TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                FOREIGN KEY(pallet_id) REFERENCES pallet(id) ON DELETE CASCADE,
+                UNIQUE(pallet_id, item_label, color_name, marker_text)
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TABLE event_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                pallet_id INTEGER,
+                event_type TEXT NOT NULL,
+                message TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES inspection_session(id) ON DELETE CASCADE,
+                FOREIGN KEY(pallet_id) REFERENCES pallet(id) ON DELETE SET NULL
+            )
+            """.trimIndent(),
+        )
+    }
+
+    private fun createScannerSyncTables(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS server_barcode_reference (
+                barcode_key TEXT PRIMARY KEY,
+                cargo_tracking_id INTEGER NOT NULL,
+                parent_hbl_no TEXT NOT NULL,
+                matched_child_hbl TEXT NOT NULL,
+                matched_by TEXT NOT NULL,
+                child_hbls TEXT NOT NULL,
+                status TEXT NOT NULL,
+                customers_status TEXT NOT NULL,
+                mpi_status TEXT NOT NULL,
+                location TEXT NOT NULL,
+                pkgs INTEGER,
+                out_turn_qty INTEGER,
+                submission_date TEXT NOT NULL,
+                container_no TEXT NOT NULL,
+                vessel_name TEXT NOT NULL,
+                company TEXT NOT NULL,
+                customer_name TEXT NOT NULL,
+                updated_cursor TEXT NOT NULL,
+                server_scan_count INTEGER NOT NULL DEFAULT 0,
+                server_matched_scan_count INTEGER NOT NULL DEFAULT 0,
+                server_mismatch_scan_count INTEGER NOT NULL DEFAULT 0,
+                server_error_scan_count INTEGER NOT NULL DEFAULT 0,
+                server_last_scanned_at TEXT NOT NULL DEFAULT '',
+                server_last_match_status TEXT NOT NULL DEFAULT ''
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS scanner_scan_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scanned_barcode TEXT NOT NULL,
+                database_record TEXT NOT NULL,
+                match_status TEXT NOT NULL,
+                status_text TEXT NOT NULL,
+                source TEXT NOT NULL,
+                scanned_at INTEGER NOT NULL,
+                cargo_tracking_id INTEGER,
+                parent_hbl_no TEXT,
+                matched_child_hbl TEXT,
+                matched_by TEXT,
+                child_hbls TEXT,
+                container_no TEXT,
+                vessel_name TEXT,
+                company TEXT,
+                customer_name TEXT,
+                location TEXT,
+                sync_state TEXT NOT NULL DEFAULT 'PENDING',
+                uploaded_batch_id INTEGER,
+                uploaded_at INTEGER
+            )
+            """.trimIndent(),
+        )
     }
 
     private fun Cursor.toSessionRecord(): InspectionSessionRecord = InspectionSessionRecord(
@@ -469,8 +670,53 @@ class CustomsDatabaseHelper(context: Context) :
         createdAt = getLong(getColumnIndexOrThrow("created_at")),
     )
 
+    private fun Cursor.toServerBarcodeLookupResult(): BarcodeLookupResult = BarcodeLookupResult(
+        found = true,
+        databaseRecord = getString(getColumnIndexOrThrow("parent_hbl_no")),
+        status = getString(getColumnIndexOrThrow("status")),
+        source = "SERVER_CACHE",
+        cargoTrackingId = getLong(getColumnIndexOrThrow("cargo_tracking_id")),
+        parentHblNo = getString(getColumnIndexOrThrow("parent_hbl_no")),
+        matchedChildHbl = getString(getColumnIndexOrThrow("matched_child_hbl")).ifBlank { null },
+        matchedBy = getString(getColumnIndexOrThrow("matched_by")).ifBlank { null },
+        childHbls = getString(getColumnIndexOrThrow("child_hbls")).ifBlank { null },
+        containerNo = getString(getColumnIndexOrThrow("container_no")).ifBlank { null },
+        vesselName = getString(getColumnIndexOrThrow("vessel_name")).ifBlank { null },
+        company = getString(getColumnIndexOrThrow("company")).ifBlank { null },
+        customerName = getString(getColumnIndexOrThrow("customer_name")).ifBlank { null },
+        location = getString(getColumnIndexOrThrow("location")).ifBlank { null },
+        pkgs = getIntOrNull("pkgs"),
+        outTurnQty = getIntOrNull("out_turn_qty"),
+        submissionDate = getString(getColumnIndexOrThrow("submission_date")).ifBlank { null },
+    )
+
+    private fun Cursor.toPendingScannerUploadRecord(): PendingScannerUploadRecord = PendingScannerUploadRecord(
+        id = getLong(getColumnIndexOrThrow("id")),
+        scannedBarcode = getString(getColumnIndexOrThrow("scanned_barcode")),
+        databaseRecord = getString(getColumnIndexOrThrow("database_record")),
+        matchStatus = ScannerMatchStatus.valueOf(getString(getColumnIndexOrThrow("match_status"))),
+        status = getString(getColumnIndexOrThrow("status_text")),
+        source = getString(getColumnIndexOrThrow("source")),
+        scannedAt = getLong(getColumnIndexOrThrow("scanned_at")),
+        cargoTrackingId = getLongOrNull(getColumnIndexOrThrow("cargo_tracking_id")),
+        parentHblNo = getStringOrNull(getColumnIndexOrThrow("parent_hbl_no")),
+        matchedChildHbl = getStringOrNull(getColumnIndexOrThrow("matched_child_hbl")),
+        matchedBy = getStringOrNull(getColumnIndexOrThrow("matched_by")),
+        childHbls = getStringOrNull(getColumnIndexOrThrow("child_hbls")),
+        containerNo = getStringOrNull(getColumnIndexOrThrow("container_no")),
+        vesselName = getStringOrNull(getColumnIndexOrThrow("vessel_name")),
+        company = getStringOrNull(getColumnIndexOrThrow("company")),
+        customerName = getStringOrNull(getColumnIndexOrThrow("customer_name")),
+        location = getStringOrNull(getColumnIndexOrThrow("location")),
+    )
+
+    private fun Cursor.getIntOrNull(columnName: String): Int? {
+        val index = getColumnIndexOrThrow(columnName)
+        return if (isNull(index)) null else getInt(index)
+    }
+
     companion object {
         private const val DATABASE_NAME = "mixport_customs_pilot.db"
-        private const val DATABASE_VERSION = 1
+        private const val DATABASE_VERSION = 2
     }
 }

@@ -29,6 +29,95 @@ Request:
 }
 ```
 
+### `GET /scanner-sync/bootstrap`
+
+Download the current parent-HBL and child-HBL scanner dataset for local offline lookup on the Hikrobot device.
+
+Response:
+
+```json
+{
+  "ok": true,
+  "count": 2,
+  "rows": [
+    {
+      "barcode_key": "VAN2026061615",
+      "cargo_tracking_id": 1284,
+      "parent_hbl_no": "VAN2026061615",
+      "matched_child_hbl": "",
+      "matched_by": "hbl_no",
+      "child_hbls": "VAN1413050612\nVAN1413050054",
+      "status": "available",
+      "container_no": "MSCU1234567",
+      "vessel_name": "Tauranga Express",
+      "company": "Mixport Pilot"
+    },
+    {
+      "barcode_key": "VAN1413050612",
+      "cargo_tracking_id": 1284,
+      "parent_hbl_no": "VAN2026061615",
+      "matched_child_hbl": "VAN1413050612",
+      "matched_by": "child_hbl",
+      "child_hbls": "VAN1413050612\nVAN1413050054",
+      "status": "available",
+      "container_no": "MSCU1234567",
+      "vessel_name": "Tauranga Express",
+      "company": "Mixport Pilot"
+    }
+  ],
+  "synced_at": "2026-07-12T09:14:33Z"
+}
+```
+
+### `POST /scanner-sync/upload`
+
+Upload a completed local scanner batch after staff decide the offline queue is ready to sync back into the pilot company environment.
+
+Request:
+
+```json
+{
+  "deviceId": "hik-7C91B2AA",
+  "operatorName": "Shift A",
+  "workflowMode": "TRIGGER_ONCE",
+  "uploadedAt": "2026-07-12T09:18:02Z",
+  "records": [
+    {
+      "localId": 41,
+      "scannedBarcode": "VAN1413050612",
+      "databaseRecord": "VAN2026061615",
+      "matchStatus": "MATCHED",
+      "status": "available",
+      "source": "SERVER_CACHE",
+      "scannedAt": "2026-07-12T09:17:31Z",
+      "cargoTrackingId": 1284,
+      "parentHblNo": "VAN2026061615",
+      "matchedChildHbl": "VAN1413050612",
+      "matchedBy": "child_hbl",
+      "containerNo": "MSCU1234567",
+      "vesselName": "Tauranga Express",
+      "company": "Mixport Pilot",
+      "location": "A-12"
+    }
+  ]
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "batch_id": 17,
+  "batch_uuid": "5bf8f4d3-54e1-43fe-bdb0-149ebd885d5a",
+  "uploaded_count": 1,
+  "matched_count": 1,
+  "mismatch_count": 0,
+  "error_count": 0,
+  "uploaded_at": "2026-07-12T09:18:03Z"
+}
+```
+
 Response:
 
 ```json
