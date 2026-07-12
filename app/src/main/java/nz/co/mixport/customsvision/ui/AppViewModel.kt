@@ -1143,6 +1143,8 @@ class AppViewModel(
                     status = lookupResult.status,
                     source = lookupResult.source,
                     scannedAt = scannedAt,
+                    customersStatus = lookupResult.customersStatus,
+                    mpiStatus = lookupResult.mpiStatus,
                 )
             }
 
@@ -1168,10 +1170,7 @@ class AppViewModel(
         language: AppLanguage,
     ): String {
         return when (record.matchStatus) {
-            ScannerMatchStatus.MATCHED -> language.pick(
-                "\"${record.scannedBarcode}\" verified successfully.",
-                "序列号 ${record.scannedBarcode} 已匹配成功。",
-            )
+            ScannerMatchStatus.MATCHED -> scannerMatchedMessage(record, language)
 
             ScannerMatchStatus.MISMATCH -> language.pick(
                 "\"${record.scannedBarcode}\" was not found.",
@@ -1186,6 +1185,36 @@ class AppViewModel(
             ScannerMatchStatus.WAITING -> language.pick(
                 "Waiting for barcode input.",
                 "等待扫描序列号。",
+            )
+        }
+    }
+
+    private fun scannerMatchedMessage(
+        record: ScannerRecord,
+        language: AppLanguage,
+    ): String {
+        val nzcsStatus = localizedStatus(
+            language,
+            canonicalScannerClearanceStatus(record.customersStatus),
+        )
+        val mpiStatus = localizedStatus(
+            language,
+            canonicalScannerClearanceStatus(record.mpiStatus),
+        )
+        return when (overallScannerClearanceStatus(record.customersStatus, record.mpiStatus)) {
+            "CLEAR" -> language.pick(
+                "\"${record.scannedBarcode}\" matched and is clear. NZCS $nzcsStatus | MPI $mpiStatus.",
+                "序列号 ${record.scannedBarcode} 已匹配并已放行。NZCS ${nzcsStatus} | MPI ${mpiStatus}。",
+            )
+
+            "FAILED" -> language.pick(
+                "\"${record.scannedBarcode}\" matched, but clearance failed. NZCS $nzcsStatus | MPI $mpiStatus.",
+                "序列号 ${record.scannedBarcode} 已匹配，但清关未通过。NZCS ${nzcsStatus} | MPI ${mpiStatus}。",
+            )
+
+            else -> language.pick(
+                "\"${record.scannedBarcode}\" matched, but clearance is on hold. NZCS $nzcsStatus | MPI $mpiStatus.",
+                "序列号 ${record.scannedBarcode} 已匹配，但当前仍为待处理。NZCS ${nzcsStatus} | MPI ${mpiStatus}。",
             )
         }
     }

@@ -69,6 +69,36 @@ fun localizedStatus(language: AppLanguage, status: String): String {
     }
 }
 
+fun canonicalScannerClearanceStatus(status: String?): String {
+    val normalized = status
+        .orEmpty()
+        .trim()
+        .uppercase()
+        .replace("-", "")
+        .replace("_", "")
+        .replace(" ", "")
+    return when {
+        normalized.isBlank() -> "HOLD"
+        normalized in setOf("CLEAR", "PASS", "PASSED", "RELEASED", "已通过", "放行") -> "CLEAR"
+        normalized in setOf("FAILED", "FAIL", "REJECTED", "未通过", "失败") -> "FAILED"
+        normalized in setOf("HOLD", "ONHOLD", "PENDING", "WAITING", "待处理", "暂扣") -> "HOLD"
+        else -> "HOLD"
+    }
+}
+
+fun overallScannerClearanceStatus(
+    nzcsStatus: String?,
+    mpiStatus: String?,
+): String {
+    val normalizedNzcs = canonicalScannerClearanceStatus(nzcsStatus)
+    val normalizedMpi = canonicalScannerClearanceStatus(mpiStatus)
+    return when {
+        normalizedNzcs == "FAILED" || normalizedMpi == "FAILED" -> "FAILED"
+        normalizedNzcs == "CLEAR" && normalizedMpi == "CLEAR" -> "CLEAR"
+        else -> "HOLD"
+    }
+}
+
 fun localizedScannerSource(language: AppLanguage, source: String): String {
     return when (canonicalScannerValue(source)) {
         "LOCAL" -> language.pick("Local scanner flow", "本地扫码流程")

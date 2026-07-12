@@ -72,7 +72,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Observer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
-import nz.co.mixport.customsvision.BuildConfig
 import nz.co.mixport.customsvision.camera.InspectionCameraController
 import nz.co.mixport.customsvision.camera.LiveDetectionFrame
 import nz.co.mixport.customsvision.camera.LiveRecognition
@@ -1880,8 +1879,8 @@ private fun EndpointCard(language: nz.co.mixport.customsvision.data.AppLanguage)
             )
             Text(
                 text = language.pick(
-                    "Default API base URL: ${BuildConfig.DEFAULT_API_BASE_URL}",
-                    "默认 API 地址：${BuildConfig.DEFAULT_API_BASE_URL}",
+                    "Release builds use a provisioned Mixport sync profile and keep scanner credentials out of the worker-facing UI.",
+                    "Release 构建会使用预置的 Mixport 同步配置，并且不会在工作人员界面暴露扫码凭据。",
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

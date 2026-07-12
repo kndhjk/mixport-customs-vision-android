@@ -81,6 +81,8 @@ data class ScannerRecord(
     val status: String,
     val source: String,
     val scannedAt: Long,
+    val customersStatus: String? = null,
+    val mpiStatus: String? = null,
 )
 
 data class ScannerSyncSettings(

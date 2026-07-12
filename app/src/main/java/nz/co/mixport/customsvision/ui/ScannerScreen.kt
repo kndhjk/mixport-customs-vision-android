@@ -48,6 +48,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import nz.co.mixport.customsvision.BuildConfig
 import nz.co.mixport.customsvision.data.AppLanguage
 import nz.co.mixport.customsvision.data.normalizeScannerBarcode
 import nz.co.mixport.customsvision.data.ScannerMatchStatus
@@ -62,6 +63,8 @@ private val ScannerErr = Color(0xFFD92D20)
 private val ScannerIdle = Color(0xFF475467)
 private val ScannerBrandStart = Color(0xFFE53935)
 private val ScannerBrandEnd = Color(0xFFB42318)
+private val ScannerHoldStart = Color(0xFFF4B400)
+private val ScannerHoldEnd = Color(0xFFD97706)
 private val ScannerPanelTint = Color(0xFFFFF7F5)
 private const val MANUAL_TRIGGER_REPEAT_MS = 420L
 private const val SINGLE_TRIGGER_LIGHT_OFF_DELAY_MS = 650L
@@ -417,10 +420,23 @@ private fun ScannerResultCard(
     isPdaServiceInstalled: Boolean,
     isPdaBridgeReady: Boolean,
 ) {
-    val resultColor = scannerStatusColor(scanner.lastResult, scanner.isProcessing)
     val isWaitingState = !scanner.isProcessing && scanner.lastResult == ScannerMatchStatus.WAITING
     val visibleRecord = latestRecord.takeUnless { isWaitingState }
     val liveLookup = scanner.lastLookupResult.takeUnless { isWaitingState }
+    val nzcsStatus = liveLookup?.customersStatus ?: visibleRecord?.customersStatus
+    val mpiStatus = liveLookup?.mpiStatus ?: visibleRecord?.mpiStatus
+    val clearanceOverallStatus = if (scanner.lastResult == ScannerMatchStatus.MATCHED) {
+        overallScannerClearanceStatus(nzcsStatus, mpiStatus)
+    } else {
+        null
+    }
+    val normalizedNzcsStatus = clearanceOverallStatus?.let { canonicalScannerClearanceStatus(nzcsStatus) }
+    val normalizedMpiStatus = clearanceOverallStatus?.let { canonicalScannerClearanceStatus(mpiStatus) }
+    val resultColor = scannerStatusColor(
+        result = scanner.lastResult,
+        isProcessing = scanner.isProcessing,
+        clearanceOverallStatus = clearanceOverallStatus,
+    )
     val liveCode = when {
         scanner.isProcessing -> lastPdaBarcode ?: visibleRecord?.scannedBarcode
         isWaitingState -> lastPdaBarcode
@@ -445,11 +461,11 @@ private fun ScannerResultCard(
         liveLookup?.customerName?.takeIf(String::isNotBlank),
     ).joinToString(" | ").ifBlank { null }
     val liveStatusPair = buildList {
-        liveLookup?.customersStatus?.takeIf(String::isNotBlank)?.let {
-            add(language.pick("Customer ${localizedStatus(language, it)}", "\u5ba2\u6237\u72b6\u6001 ${localizedStatus(language, it)}"))
+        normalizedNzcsStatus?.let {
+            add("NZCS ${localizedStatus(language, it)}")
         }
-        liveLookup?.mpiStatus?.takeIf(String::isNotBlank)?.let {
-            add(language.pick("MPI ${localizedStatus(language, it)}", "MPI \u72b6\u6001 ${localizedStatus(language, it)}"))
+        normalizedMpiStatus?.let {
+            add("MPI ${localizedStatus(language, it)}")
         }
     }.joinToString(" | ").ifBlank { null }
     val liveQuantityLine = buildList {
@@ -479,11 +495,15 @@ private fun ScannerResultCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    brush = Brush.linearGradient(
-                        colors = scannerResultBackground(scanner.lastResult, scanner.isProcessing),
-                    ),
-                )
+                    .background(
+                        brush = Brush.linearGradient(
+                            colors = scannerResultBackground(
+                                result = scanner.lastResult,
+                                isProcessing = scanner.isProcessing,
+                                clearanceOverallStatus = clearanceOverallStatus,
+                            ),
+                        ),
+                    )
                 .padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -499,7 +519,12 @@ private fun ScannerResultCard(
                         style = MaterialTheme.typography.labelLarge,
                     )
                     Text(
-                        text = scannerResultTitle(language, scanner.lastResult, scanner.isProcessing),
+                        text = scannerResultTitle(
+                            language = language,
+                            result = scanner.lastResult,
+                            isProcessing = scanner.isProcessing,
+                            clearanceOverallStatus = clearanceOverallStatus,
+                        ),
                         color = Color.White,
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold,
@@ -543,8 +568,13 @@ private fun ScannerResultCard(
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ScannerStatusPill(
-                            label = language.pick("Result", "\u7ed3\u679c"),
-                            value = scannerResultTitle(language, scanner.lastResult, scanner.isProcessing),
+                            label = language.pick("Status", "\u72b6\u6001"),
+                            value = scannerResultTitle(
+                                language = language,
+                                result = scanner.lastResult,
+                                isProcessing = scanner.isProcessing,
+                                clearanceOverallStatus = clearanceOverallStatus,
+                            ),
                             color = resultColor,
                         )
                         ScannerStatusPill(
@@ -577,7 +607,7 @@ private fun ScannerResultCard(
                         value = liveRecord ?: language.pick("No matched record yet", "\u6682\u672a\u5339\u914d\u5230\u8bb0\u5f55"),
                     )
                     ScannerDetailRow(
-                        label = language.pick("Status", "\u72b6\u6001"),
+                        label = language.pick("Pickup status", "\u63d0\u8d27\u72b6\u6001"),
                         value = when {
                             liveStatus != null -> liveStatus
                             scanner.isProcessing -> language.pick("Verifying", "\u6bd4\u5bf9\u4e2d")
@@ -679,31 +709,80 @@ private fun ScannerSyncCard(
                 )
             }
 
-            OutlinedTextField(
-                value = sync.apiBaseUrl,
-                onValueChange = onApiBaseUrlChanged,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(language.pick("API base URL", "API 地址")) },
-                singleLine = true,
-                enabled = !sync.isRefreshing && !sync.isUploading,
-            )
-            OutlinedTextField(
-                value = sync.bearerToken,
-                onValueChange = onBearerTokenChanged,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(language.pick("Bearer token", "Bearer 令牌")) },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                enabled = !sync.isRefreshing && !sync.isUploading,
-            )
-            OutlinedTextField(
-                value = sync.deviceId,
-                onValueChange = onDeviceIdChanged,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(language.pick("Device ID", "设备 ID")) },
-                singleLine = true,
-                enabled = !sync.isRefreshing && !sync.isUploading,
-            )
+            if (BuildConfig.DEBUG) {
+                OutlinedTextField(
+                    value = sync.apiBaseUrl,
+                    onValueChange = onApiBaseUrlChanged,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(language.pick("API base URL", "API 地址")) },
+                    singleLine = true,
+                    enabled = !sync.isRefreshing && !sync.isUploading,
+                )
+                OutlinedTextField(
+                    value = sync.bearerToken,
+                    onValueChange = onBearerTokenChanged,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(language.pick("Bearer token", "Bearer 令牌")) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    enabled = !sync.isRefreshing && !sync.isUploading,
+                )
+                OutlinedTextField(
+                    value = sync.deviceId,
+                    onValueChange = onDeviceIdChanged,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(language.pick("Device ID", "设备 ID")) },
+                    singleLine = true,
+                    enabled = !sync.isRefreshing && !sync.isUploading,
+                )
+            } else {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = ScannerPanelTint,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = language.pick("Secure scanner profile", "安全扫码配置"),
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = if (sync.isConfigured) {
+                                language.pick(
+                                    "This release build already includes the private sync profile. Staff do not need to view or enter server credentials here.",
+                                    "当前 release 已内置 Mixport 扫码配置，工作人员无需在这里查看或输入服务器凭据。",
+                                )
+                            } else {
+                                language.pick(
+                                    "This build is missing a provisioned scanner profile. Rebuild it with the private sync credential before production use.",
+                                    "当前构建未预置扫码配置，正式使用前需要重新打包并写入 Mixport 服务器令牌。",
+                                )
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                ScannerDetailRow(
+                    label = language.pick("Provisioning", "配置状态"),
+                    value = if (sync.isConfigured) {
+                        language.pick("Provisioned in secure build", "已内置到安全构建")
+                    } else {
+                        language.pick("Provisioning missing", "缺少预置配置")
+                    },
+                )
+                ScannerDetailRow(
+                    label = language.pick("Device ID", "设备 ID"),
+                    value = sync.deviceId.ifBlank {
+                        language.pick("Not assigned", "未分配")
+                    },
+                )
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -711,7 +790,7 @@ private fun ScannerSyncCard(
             ) {
                 Button(
                     onClick = onRefreshReferences,
-                    enabled = !sync.isRefreshing && !sync.isUploading,
+                    enabled = sync.isConfigured && !sync.isRefreshing && !sync.isUploading,
                     modifier = Modifier.weight(1f),
                 ) {
                     Text(
@@ -724,7 +803,7 @@ private fun ScannerSyncCard(
                 }
                 FilledTonalButton(
                     onClick = onUploadPending,
-                    enabled = !sync.isRefreshing && !sync.isUploading && sync.pendingUploadCount > 0,
+                    enabled = sync.isConfigured && !sync.isRefreshing && !sync.isUploading && sync.pendingUploadCount > 0,
                     modifier = Modifier.weight(1f),
                 ) {
                     Text(
@@ -973,6 +1052,11 @@ private fun ScannerHistoryItem(
     language: AppLanguage,
     record: ScannerRecord,
 ) {
+    val clearanceOverallStatus = if (record.matchStatus == ScannerMatchStatus.MATCHED) {
+        overallScannerClearanceStatus(record.customersStatus, record.mpiStatus)
+    } else {
+        null
+    }
     Card(
         colors = CardDefaults.cardColors(
             containerColor = ScannerPanelTint,
@@ -994,17 +1078,37 @@ private fun ScannerHistoryItem(
                     fontWeight = FontWeight.Bold,
                 )
                 ScannerStatusPill(
-                    label = language.pick("Result", "结果"),
-                    value = scannerResultTitle(language, record.matchStatus, isProcessing = false),
-                    color = scannerStatusColor(record.matchStatus, isProcessing = false),
+                    label = language.pick("Status", "状态"),
+                    value = scannerResultTitle(
+                        language = language,
+                        result = record.matchStatus,
+                        isProcessing = false,
+                        clearanceOverallStatus = clearanceOverallStatus,
+                    ),
+                    color = scannerStatusColor(
+                        result = record.matchStatus,
+                        isProcessing = false,
+                        clearanceOverallStatus = clearanceOverallStatus,
+                    ),
                 )
             }
             ScannerDetailRow(
                 label = language.pick("Database record", "数据库记录"),
                 value = localizedScannerDatabaseRecord(language, record.databaseRecord),
             )
+            if (record.matchStatus == ScannerMatchStatus.MATCHED &&
+                (record.customersStatus != null || record.mpiStatus != null)
+            ) {
+                ScannerDetailRow(
+                    label = language.pick("NZCS / MPI", "NZCS / MPI"),
+                    value = listOf(
+                        "NZCS ${localizedStatus(language, canonicalScannerClearanceStatus(record.customersStatus))}",
+                        "MPI ${localizedStatus(language, canonicalScannerClearanceStatus(record.mpiStatus))}",
+                    ).joinToString(" | "),
+                )
+            }
             ScannerDetailRow(
-                label = language.pick("Status", "状态"),
+                label = language.pick("Pickup status", "提货状态"),
                 value = localizedScannerStatusText(language, record.status),
             )
             ScannerDetailRow(
@@ -1107,11 +1211,13 @@ private fun ScannerStatusPill(
 private fun scannerStatusColor(
     result: ScannerMatchStatus,
     isProcessing: Boolean,
+    clearanceOverallStatus: String? = null,
 ): Color {
     return when {
         isProcessing -> ScannerIdle
-        result == ScannerMatchStatus.MATCHED -> ScannerOk
-        result == ScannerMatchStatus.MISMATCH -> ScannerWarn
+        result == ScannerMatchStatus.MATCHED && clearanceOverallStatus == "CLEAR" -> ScannerOk
+        result == ScannerMatchStatus.MATCHED -> ScannerWarn
+        result == ScannerMatchStatus.MISMATCH -> ScannerErr
         result == ScannerMatchStatus.ERROR -> ScannerErr
         else -> ScannerIdle
     }
@@ -1120,10 +1226,13 @@ private fun scannerStatusColor(
 private fun scannerResultBackground(
     result: ScannerMatchStatus,
     isProcessing: Boolean,
+    clearanceOverallStatus: String? = null,
 ): List<Color> {
     return when {
         isProcessing -> listOf(ScannerBrandStart, ScannerBrandEnd)
-        result == ScannerMatchStatus.MATCHED -> listOf(Color(0xFF169B62), Color(0xFF0B6E3E))
+        result == ScannerMatchStatus.MATCHED && clearanceOverallStatus == "CLEAR" ->
+            listOf(Color(0xFF169B62), Color(0xFF0B6E3E))
+        result == ScannerMatchStatus.MATCHED -> listOf(ScannerHoldStart, ScannerHoldEnd)
         else -> listOf(ScannerBrandStart, ScannerBrandEnd)
     }
 }
@@ -1132,10 +1241,11 @@ private fun scannerResultTitle(
     language: AppLanguage,
     result: ScannerMatchStatus,
     isProcessing: Boolean,
+    clearanceOverallStatus: String? = null,
 ): String {
     return when {
         isProcessing -> language.pick("Verifying", "比对中")
-        result == ScannerMatchStatus.MATCHED -> language.pick("Matched", "已匹配")
+        result == ScannerMatchStatus.MATCHED -> localizedStatus(language, clearanceOverallStatus ?: "HOLD")
         result == ScannerMatchStatus.MISMATCH -> language.pick("Not found", "未找到")
         result == ScannerMatchStatus.ERROR -> language.pick("Error", "错误")
         else -> language.pick("Waiting", "等待中")

@@ -70,6 +70,8 @@ class AppPreferencesRepository(context: Context) {
                             status = item.optString("status"),
                             source = item.optString("source"),
                             scannedAt = item.optLong("scannedAt"),
+                            customersStatus = item.optString("customersStatus").ifBlank { null },
+                            mpiStatus = item.optString("mpiStatus").ifBlank { null },
                         ),
                     )
                 }
@@ -88,6 +90,8 @@ class AppPreferencesRepository(context: Context) {
                     put("status", record.status)
                     put("source", record.source)
                     put("scannedAt", record.scannedAt)
+                    put("customersStatus", record.customersStatus)
+                    put("mpiStatus", record.mpiStatus)
                 },
             )
         }
@@ -95,16 +99,18 @@ class AppPreferencesRepository(context: Context) {
     }
 
     fun getScannerSyncSettings(): ScannerSyncSettings {
+        val defaultApiBaseUrl = BuildConfig.DEFAULT_API_BASE_URL.trim()
         val storedApiBaseUrl = preferences.getString(KEY_SCANNER_API_BASE_URL, null).orEmpty().trim()
-        val resolvedApiBaseUrl = storedApiBaseUrl.ifBlank { BuildConfig.DEFAULT_API_BASE_URL.trim() }
-        if (storedApiBaseUrl != resolvedApiBaseUrl && resolvedApiBaseUrl.isNotBlank()) {
-            preferences.edit().putString(KEY_SCANNER_API_BASE_URL, resolvedApiBaseUrl).apply()
+        val resolvedApiBaseUrl = storedApiBaseUrl.ifBlank { defaultApiBaseUrl }
+        if (storedApiBaseUrl.isNotBlank() && storedApiBaseUrl == defaultApiBaseUrl) {
+            preferences.edit().remove(KEY_SCANNER_API_BASE_URL).apply()
         }
 
+        val defaultBearerToken = BuildConfig.DEFAULT_API_BEARER_TOKEN.trim()
         val storedBearerToken = preferences.getString(KEY_SCANNER_API_BEARER_TOKEN, null).orEmpty().trim()
-        val resolvedBearerToken = storedBearerToken.ifBlank { BuildConfig.DEFAULT_API_BEARER_TOKEN.trim() }
-        if (storedBearerToken != resolvedBearerToken && resolvedBearerToken.isNotBlank()) {
-            preferences.edit().putString(KEY_SCANNER_API_BEARER_TOKEN, resolvedBearerToken).apply()
+        val resolvedBearerToken = storedBearerToken.ifBlank { defaultBearerToken }
+        if (storedBearerToken.isNotBlank() && storedBearerToken == defaultBearerToken) {
+            preferences.edit().remove(KEY_SCANNER_API_BEARER_TOKEN).apply()
         }
 
         val storedDeviceId = preferences.getString(KEY_SCANNER_DEVICE_ID, null).orEmpty().trim()

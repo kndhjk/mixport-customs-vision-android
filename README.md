@@ -37,6 +37,8 @@ This repo is for the first pilot company, using the same company server stack la
   - tap once: one scan
   - hold the key: repeated scan until release
 - shows the scanned serial number and database comparison result at the top of the page
+- keeps the result card green only when both `NZCS` and `MPI` are `clear`
+- turns the result card yellow when either `NZCS` or `MPI` is still `hold` or `failed`, while showing the exact clearance state
 - uses different tones for matched, mismatch, and empty/error results
 
 ### 3. Mobile recognition baseline
@@ -67,6 +69,7 @@ That keeps the pilot safer and makes multi-company rollout possible later throug
 - the scanner page can now pull HBL cache data from `GET /private-sync/scanner-sync/bootstrap`
 - pending offline scan results can be uploaded manually to `POST /private-sync/scanner-sync/upload`
 - live fallback verification can hit `POST /private-sync/barcode/verify` when a serial is missing from the local cache
+- release builds keep the server sync profile provisioned in-build instead of exposing worker-facing token entry fields
 
 ### Standard Android phones
 
