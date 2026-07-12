@@ -87,20 +87,20 @@ class PilotRepository(
         barcode: String,
         settings: ScannerSyncSettings? = null,
     ): BarcodeLookupResult? = withContext(Dispatchers.IO) {
-        val local = databaseHelper.lookupBarcode(barcode)
+        val normalizedBarcode = normalizeScannerBarcode(barcode)
+        val local = databaseHelper.lookupBarcode(normalizedBarcode)
         if (local != null) {
             return@withContext local
         }
         if (settings == null || settings.apiBaseUrl.isBlank() || settings.bearerToken.isBlank()) {
             return@withContext null
         }
-        runCatching { syncClient.verifyBarcode(settings, barcode) }
-            .getOrNull()
+        syncClient.verifyBarcode(settings, normalizedBarcode)
             ?.also { remote ->
                 remote.takeIf { it.found }
                     ?.let { found ->
                         databaseHelper.storeServerBarcodeReferences(
-                            rows = listOf(found.toBootstrapRow(barcode)),
+                            rows = listOf(found.toBootstrapRow(normalizedBarcode)),
                             replaceExisting = false,
                         )
                     }
@@ -251,15 +251,17 @@ class PilotRepository(
 
     private fun BarcodeLookupResult.toBootstrapRow(barcode: String): ScannerBootstrapRow {
         return ScannerBootstrapRow(
-            barcodeKey = barcode.trim().uppercase(),
+            barcodeKey = normalizeScannerBarcode(barcode),
             cargoTrackingId = cargoTrackingId ?: 0L,
             parentHblNo = parentHblNo ?: databaseRecord,
             matchedChildHbl = matchedChildHbl.orEmpty(),
+            matchedBarcodeCode = matchedBarcodeCode.orEmpty(),
             matchedBy = matchedBy ?: "hbl_no",
             childHbls = childHbls.orEmpty(),
+            barcodeCodes = barcodeCodes.orEmpty(),
             status = status,
-            customersStatus = "",
-            mpiStatus = "",
+            customersStatus = customersStatus.orEmpty(),
+            mpiStatus = mpiStatus.orEmpty(),
             location = location.orEmpty(),
             pkgs = pkgs,
             outTurnQty = outTurnQty,

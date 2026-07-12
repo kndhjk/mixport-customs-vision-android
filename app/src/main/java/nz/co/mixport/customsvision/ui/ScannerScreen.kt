@@ -49,6 +49,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import nz.co.mixport.customsvision.data.AppLanguage
+import nz.co.mixport.customsvision.data.normalizeScannerBarcode
 import nz.co.mixport.customsvision.data.ScannerMatchStatus
 import nz.co.mixport.customsvision.data.ScannerRecord
 import nz.co.mixport.customsvision.scanner.HikPdaScanController
@@ -71,6 +72,7 @@ fun ScannerScreen(
     uiState: LiveInspectionUiState,
     onScannerInputChanged: (String) -> Unit,
     onScannerVerify: (String) -> Unit,
+    onScannerAwaitingNextScan: () -> Unit,
     onScannerPdaDetected: (String, String) -> Unit,
     onScannerSoundChanged: (Boolean) -> Unit,
     onScannerWorkflowModeChanged: (PdaScanWorkflowMode) -> Unit,
@@ -100,6 +102,15 @@ fun ScannerScreen(
     var manualTriggerJob by remember { mutableStateOf<Job?>(null) }
     var activeHardwareKey by remember { mutableStateOf<Int?>(null) }
 
+    fun resetScannerResultForNextAttempt() {
+        if (scanner.isProcessing) {
+            return
+        }
+        lastPdaBarcode = null
+        lastPdaCodeType = null
+        onScannerAwaitingNextScan()
+    }
+
     fun stopManualTrigger(updateStatus: Boolean) {
         manualTriggerJob?.cancel()
         manualTriggerJob = null
@@ -122,6 +133,7 @@ fun ScannerScreen(
     }
 
     fun triggerManualScan(showHint: Boolean) {
+        resetScannerResultForNextAttempt()
         pdaScanController.triggerSingleScan()
             .onSuccess {
                 isPdaBridgeReady = true
@@ -300,12 +312,12 @@ fun ScannerScreen(
     }
 
     LaunchedEffect(scanner.barcodeInput, scanner.isAutoVerifyEnabled, scanner.isProcessing) {
-        val candidate = scanner.barcodeInput.trim().uppercase()
-        if (!scanner.isAutoVerifyEnabled || scanner.isProcessing || candidate.length < 6) {
+        val candidate = normalizeScannerBarcode(scanner.barcodeInput)
+        if (!scanner.isAutoVerifyEnabled || scanner.isProcessing || candidate.length < 4) {
             return@LaunchedEffect
         }
         delay(180)
-        if (scanner.barcodeInput.trim().uppercase() == candidate &&
+        if (normalizeScannerBarcode(scanner.barcodeInput) == candidate &&
             scanner.lastProcessedBarcode != candidate
         ) {
             onScannerVerify(candidate)
@@ -406,10 +418,58 @@ private fun ScannerResultCard(
     isPdaBridgeReady: Boolean,
 ) {
     val resultColor = scannerStatusColor(scanner.lastResult, scanner.isProcessing)
-    val liveCode = latestRecord?.scannedBarcode ?: lastPdaBarcode
-    val liveRecord = latestRecord?.let { localizedScannerDatabaseRecord(language, it.databaseRecord) }
-    val liveStatus = latestRecord?.let { localizedScannerStatusText(language, it.status) }
-    val liveSource = latestRecord?.let { localizedScannerSource(language, it.source) }
+    val isWaitingState = !scanner.isProcessing && scanner.lastResult == ScannerMatchStatus.WAITING
+    val visibleRecord = latestRecord.takeUnless { isWaitingState }
+    val liveLookup = scanner.lastLookupResult.takeUnless { isWaitingState }
+    val liveCode = when {
+        scanner.isProcessing -> lastPdaBarcode ?: visibleRecord?.scannedBarcode
+        isWaitingState -> lastPdaBarcode
+        else -> visibleRecord?.scannedBarcode ?: lastPdaBarcode
+    }
+    val liveRecord = visibleRecord?.let { localizedScannerDatabaseRecord(language, it.databaseRecord) }
+    val liveStatus = visibleRecord?.let { localizedScannerStatusText(language, it.status) }
+    val liveSource = visibleRecord?.let { localizedScannerSource(language, it.source) }
+    val liveMatchRoute = liveLookup?.matchedBy?.let { localizedScannerMatchRoute(language, it) }
+    val liveMatchedValue = when {
+        !liveLookup?.matchedBarcodeCode.isNullOrBlank() -> liveLookup?.matchedBarcodeCode
+        !liveLookup?.matchedChildHbl.isNullOrBlank() -> liveLookup?.matchedChildHbl
+        !liveLookup?.parentHblNo.isNullOrBlank() -> liveLookup?.parentHblNo
+        else -> null
+    }
+    val liveContainerLine = listOfNotNull(
+        liveLookup?.containerNo?.takeIf(String::isNotBlank),
+        liveLookup?.vesselName?.takeIf(String::isNotBlank),
+    ).joinToString(" | ").ifBlank { null }
+    val livePartyLine = listOfNotNull(
+        liveLookup?.company?.takeIf(String::isNotBlank),
+        liveLookup?.customerName?.takeIf(String::isNotBlank),
+    ).joinToString(" | ").ifBlank { null }
+    val liveStatusPair = buildList {
+        liveLookup?.customersStatus?.takeIf(String::isNotBlank)?.let {
+            add(language.pick("Customer ${localizedStatus(language, it)}", "\u5ba2\u6237\u72b6\u6001 ${localizedStatus(language, it)}"))
+        }
+        liveLookup?.mpiStatus?.takeIf(String::isNotBlank)?.let {
+            add(language.pick("MPI ${localizedStatus(language, it)}", "MPI \u72b6\u6001 ${localizedStatus(language, it)}"))
+        }
+    }.joinToString(" | ").ifBlank { null }
+    val liveQuantityLine = buildList {
+        liveLookup?.pkgs?.let {
+            add(language.pick("Packages $it", "\u4ef6\u6570 $it"))
+        }
+        liveLookup?.outTurnQty?.let {
+            add(language.pick("Out-turn $it", "\u51fa\u5e93\u6570 $it"))
+        }
+        liveLookup?.location?.takeIf(String::isNotBlank)?.let {
+            add(language.pick("Location $it", "\u5e93\u4f4d $it"))
+        }
+    }.joinToString(" | ").ifBlank { null }
+    val resultMessage = when {
+        scanner.isProcessing || !isWaitingState -> scanner.statusMessage ?: statusMessage
+        else -> statusMessage ?: scanner.statusMessage
+    } ?: language.pick(
+        "Use the side scan key to start.",
+        "\u4f7f\u7528\u673a\u8eab\u626b\u7801\u952e\u5f00\u59cb\u626b\u63cf\u3002",
+    )
 
     Surface(
         shape = RoundedCornerShape(24.dp),
@@ -421,7 +481,7 @@ private fun ScannerResultCard(
                 .fillMaxWidth()
                 .background(
                     brush = Brush.linearGradient(
-                        colors = listOf(ScannerBrandStart, ScannerBrandEnd),
+                        colors = scannerResultBackground(scanner.lastResult, scanner.isProcessing),
                     ),
                 )
                 .padding(18.dp),
@@ -434,7 +494,7 @@ private fun ScannerResultCard(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = language.pick("Scanner Result", "扫码结果"),
+                        text = language.pick("Scanner Result", "\u626b\u7801\u7ed3\u679c"),
                         color = Color.White.copy(alpha = 0.92f),
                         style = MaterialTheme.typography.labelLarge,
                     )
@@ -450,9 +510,9 @@ private fun ScannerResultCard(
                     label = {
                         Text(
                             text = when {
-                                !isPdaServiceInstalled -> language.pick("Service missing", "服务缺失")
-                                isPdaBridgeReady -> language.pick("Manual ready", "手动就绪")
-                                else -> language.pick("Connecting", "连接中")
+                                !isPdaServiceInstalled -> language.pick("Service missing", "\u670d\u52a1\u7f3a\u5931")
+                                isPdaBridgeReady -> language.pick("Manual ready", "\u624b\u52a8\u5c31\u7eea")
+                                else -> language.pick("Connecting", "\u8fde\u63a5\u4e2d")
                             },
                         )
                     },
@@ -471,33 +531,30 @@ private fun ScannerResultCard(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Text(
-                        text = language.pick("Latest serial number", "最新序列号"),
+                        text = language.pick("Latest serial number", "\u6700\u65b0\u5e8f\u5217\u53f7"),
                         color = Color.White.copy(alpha = 0.82f),
                         style = MaterialTheme.typography.labelLarge,
                     )
                     Text(
-                        text = liveCode ?: language.pick("Awaiting scan", "等待扫描"),
+                        text = liveCode ?: language.pick("Awaiting scan", "\u7b49\u5f85\u626b\u63cf"),
                         color = Color.White,
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ScannerStatusPill(
-                            label = language.pick("Result", "结果"),
+                            label = language.pick("Result", "\u7ed3\u679c"),
                             value = scannerResultTitle(language, scanner.lastResult, scanner.isProcessing),
                             color = resultColor,
                         )
                         ScannerStatusPill(
-                            label = language.pick("Type", "类型"),
+                            label = language.pick("Type", "\u7c7b\u578b"),
                             value = lastPdaCodeType ?: language.pick("PDA", "PDA"),
                             color = Color.White.copy(alpha = 0.88f),
                         )
                     }
                     Text(
-                        text = statusMessage ?: scanner.statusMessage ?: language.pick(
-                            "Use the side scan key to start.",
-                            "使用机身扫码键开始扫描。",
-                        ),
+                        text = resultMessage,
                         color = Color.White,
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -516,24 +573,60 @@ private fun ScannerResultCard(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     ScannerDetailRow(
-                        label = language.pick("Database record", "数据库记录"),
-                        value = liveRecord ?: language.pick("No matched record yet", "暂未匹配到记录"),
+                        label = language.pick("Database record", "\u6570\u636e\u5e93\u8bb0\u5f55"),
+                        value = liveRecord ?: language.pick("No matched record yet", "\u6682\u672a\u5339\u914d\u5230\u8bb0\u5f55"),
                     )
                     ScannerDetailRow(
-                        label = language.pick("Status", "状态"),
+                        label = language.pick("Status", "\u72b6\u6001"),
                         value = when {
                             liveStatus != null -> liveStatus
-                            scanner.isProcessing -> language.pick("Verifying", "比对中")
-                            else -> language.pick("Waiting", "等待中")
+                            scanner.isProcessing -> language.pick("Verifying", "\u6bd4\u5bf9\u4e2d")
+                            else -> language.pick("Waiting", "\u7b49\u5f85\u4e2d")
                         },
                     )
-                    ScannerDetailRow(
-                        label = language.pick("Source", "来源"),
-                        value = liveSource ?: language.pick("Local scanner flow", "本地扫码流程"),
-                    )
-                    latestRecord?.let { record ->
+                    liveMatchRoute?.let { matchRoute ->
                         ScannerDetailRow(
-                            label = language.pick("Time", "时间"),
+                            label = language.pick("Matched by", "\u5339\u914d\u65b9\u5f0f"),
+                            value = matchRoute,
+                        )
+                    }
+                    liveMatchedValue?.let { matchedValue ->
+                        ScannerDetailRow(
+                            label = language.pick("Matched value", "\u547d\u4e2d\u503c"),
+                            value = matchedValue,
+                        )
+                    }
+                    liveContainerLine?.let { containerLine ->
+                        ScannerDetailRow(
+                            label = language.pick("Container / vessel", "\u67dc\u53f7 / \u8239\u540d"),
+                            value = containerLine,
+                        )
+                    }
+                    livePartyLine?.let { partyLine ->
+                        ScannerDetailRow(
+                            label = language.pick("Company / customer", "\u516c\u53f8 / \u5ba2\u6237"),
+                            value = partyLine,
+                        )
+                    }
+                    liveStatusPair?.let { statusPair ->
+                        ScannerDetailRow(
+                            label = language.pick("Clearance state", "\u653e\u884c\u72b6\u6001"),
+                            value = statusPair,
+                        )
+                    }
+                    liveQuantityLine?.let { quantityLine ->
+                        ScannerDetailRow(
+                            label = language.pick("Cargo detail", "\u8d27\u7269\u8be6\u60c5"),
+                            value = quantityLine,
+                        )
+                    }
+                    ScannerDetailRow(
+                        label = language.pick("Source", "\u6765\u6e90"),
+                        value = liveSource ?: language.pick("Local scanner flow", "\u672c\u5730\u626b\u7801\u6d41\u7a0b"),
+                    )
+                    visibleRecord?.let { record ->
+                        ScannerDetailRow(
+                            label = language.pick("Time", "\u65f6\u95f4"),
                             value = formatTimestamp(record.scannedAt),
                         )
                     }
@@ -1021,6 +1114,17 @@ private fun scannerStatusColor(
         result == ScannerMatchStatus.MISMATCH -> ScannerWarn
         result == ScannerMatchStatus.ERROR -> ScannerErr
         else -> ScannerIdle
+    }
+}
+
+private fun scannerResultBackground(
+    result: ScannerMatchStatus,
+    isProcessing: Boolean,
+): List<Color> {
+    return when {
+        isProcessing -> listOf(ScannerBrandStart, ScannerBrandEnd)
+        result == ScannerMatchStatus.MATCHED -> listOf(Color(0xFF169B62), Color(0xFF0B6E3E))
+        else -> listOf(ScannerBrandStart, ScannerBrandEnd)
     }
 }
 

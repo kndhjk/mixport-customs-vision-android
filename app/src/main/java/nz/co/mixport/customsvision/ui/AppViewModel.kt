@@ -21,6 +21,8 @@ import nz.co.mixport.customsvision.data.BarcodeLookupResult
 import nz.co.mixport.customsvision.data.CargoSummaryRecord
 import nz.co.mixport.customsvision.data.EventLogRecord
 import nz.co.mixport.customsvision.data.InspectionSessionRecord
+import nz.co.mixport.customsvision.data.isUsableScannerBarcode
+import nz.co.mixport.customsvision.data.normalizeScannerBarcode
 import nz.co.mixport.customsvision.data.PalletDetail
 import nz.co.mixport.customsvision.data.PilotRepository
 import nz.co.mixport.customsvision.data.ScannerMatchStatus
@@ -68,6 +70,7 @@ data class ScannerUiState(
     val statusMessage: String? = null,
     val history: List<ScannerRecord> = emptyList(),
     val lastProcessedBarcode: String? = null,
+    val lastLookupResult: BarcodeLookupResult? = null,
     val feedbackNonce: Long = 0L,
     val sync: ScannerSyncUiState = ScannerSyncUiState(),
 ) {
@@ -226,7 +229,7 @@ class AppViewModel(
         _uiState.update {
             it.copy(
                 scanner = it.scanner.copy(
-                    barcodeInput = value.take(48),
+                    barcodeInput = value.filterNot(Char::isISOControl).take(64),
                 ),
             )
         }
@@ -283,6 +286,24 @@ class AppViewModel(
                     lastResult = ScannerMatchStatus.WAITING,
                     statusMessage = null,
                     lastProcessedBarcode = null,
+                    lastLookupResult = null,
+                ),
+            )
+        }
+    }
+
+    fun prepareScannerForNextScan() {
+        _uiState.update {
+            it.copy(
+                scanner = it.scanner.copy(
+                    barcodeInput = "",
+                    lastResult = ScannerMatchStatus.WAITING,
+                    statusMessage = it.appLanguage.pick(
+                        "Waiting for barcode input.",
+                        "等待扫描序列号。",
+                    ),
+                    lastProcessedBarcode = null,
+                    lastLookupResult = null,
                 ),
             )
         }
@@ -479,7 +500,7 @@ class AppViewModel(
     }
 
     fun verifyScannerBarcode(barcode: String = _uiState.value.scanner.barcodeInput) {
-        val normalized = barcode.trim().uppercase()
+        val normalized = normalizeScannerBarcode(barcode)
         if (normalized.isBlank()) {
             _uiState.update {
                 it.copy(
@@ -487,8 +508,9 @@ class AppViewModel(
                         lastResult = ScannerMatchStatus.ERROR,
                         statusMessage = it.appLanguage.pick(
                             "Please scan or enter a barcode first.",
-                            "请先扫描或输入序列号。",
+                            "\u8bf7\u5148\u626b\u63cf\u6216\u8f93\u5165\u5e8f\u5217\u53f7\u3002",
                         ),
+                        lastLookupResult = null,
                         feedbackNonce = it.scanner.feedbackNonce + 1,
                     ),
                 )
@@ -505,7 +527,7 @@ class AppViewModel(
                     isProcessing = true,
                     statusMessage = it.appLanguage.pick(
                         "Verifying barcode...",
-                        "正在比对序列号...",
+                        "\u6b63\u5728\u6bd4\u5bf9\u5e8f\u5217\u53f7...",
                     ),
                 ),
             )
@@ -513,23 +535,27 @@ class AppViewModel(
 
         viewModelScope.launch {
             val verifiedAt = System.currentTimeMillis()
-            val lookupResult = runCatching { lookupBarcode(normalized) }.getOrNull()
-            val record = runCatching {
-                buildScannerRecord(
-                    barcode = normalized,
-                    lookupResult = lookupResult,
-                    scannedAt = verifiedAt,
-                )
-            }.getOrElse { throwable ->
-                ScannerRecord(
-                    scannedBarcode = normalized,
-                    databaseRecord = localizedErrorRecord(),
-                    matchStatus = ScannerMatchStatus.ERROR,
-                    status = throwable.message?.takeIf(String::isNotBlank) ?: SCANNER_STATUS_ERROR,
-                    source = SCANNER_SOURCE_LOCAL,
-                    scannedAt = verifiedAt,
-                )
-            }
+            val lookupAttempt = runCatching { lookupBarcode(normalized) }
+            val lookupResult = lookupAttempt.getOrNull()
+            val record = lookupAttempt.fold(
+                onSuccess = {
+                    buildScannerRecord(
+                        barcode = normalized,
+                        lookupResult = it,
+                        scannedAt = verifiedAt,
+                    )
+                },
+                onFailure = { throwable ->
+                    ScannerRecord(
+                        scannedBarcode = normalized,
+                        databaseRecord = localizedErrorRecord(),
+                        matchStatus = ScannerMatchStatus.ERROR,
+                        status = throwable.message?.takeIf(String::isNotBlank) ?: SCANNER_STATUS_ERROR,
+                        source = SCANNER_SOURCE_LOCAL,
+                        scannedAt = verifiedAt,
+                    )
+                },
+            )
             repository.recordScannerScan(record, lookupResult)
 
             val updatedHistory = listOf(record) + _uiState.value.scanner.history
@@ -551,6 +577,7 @@ class AppViewModel(
                         statusMessage = scannerMessageFor(record),
                         history = updatedHistory,
                         lastProcessedBarcode = record.scannedBarcode,
+                        lastLookupResult = lookupResult,
                         feedbackNonce = it.scanner.feedbackNonce + 1,
                         sync = it.scanner.sync.copy(
                             referenceCount = syncStatus.referenceCount,
@@ -569,7 +596,7 @@ class AppViewModel(
         barcode: String,
         codeType: String,
     ) {
-        val normalized = barcode.trim().uppercase()
+        val normalized = normalizeScannerBarcode(barcode)
         if (normalized.isBlank() || _uiState.value.scanner.isProcessing) {
             return
         }
@@ -584,7 +611,7 @@ class AppViewModel(
                 scanner = it.scanner.copy(
                     statusMessage = it.appLanguage.pick(
                         "PDA scanner detected ${normalized}${typeSuffix}. Verifying...",
-                        "PDA 已读到 ${normalized}${typeSuffix}，正在比对数据库...",
+                        "PDA \u5df2\u8bfb\u5230 ${normalized}${typeSuffix}\uff0c\u6b63\u5728\u6bd4\u5bf9\u6570\u636e\u5e93...",
                     ),
                 ),
             )
@@ -1085,7 +1112,7 @@ class AppViewModel(
     }
 
     private suspend fun lookupBarcode(barcode: String): BarcodeLookupResult? {
-        if (!BARCODE_PATTERN.matches(barcode)) {
+        if (!isUsableScannerBarcode(barcode)) {
             return null
         }
         return repository.lookupBarcode(barcode, currentScannerSyncSettings())
@@ -1097,7 +1124,7 @@ class AppViewModel(
         scannedAt: Long,
     ): ScannerRecord {
         return when {
-            !BARCODE_PATTERN.matches(barcode) -> {
+            !isUsableScannerBarcode(barcode) -> {
                 ScannerRecord(
                     scannedBarcode = barcode,
                     databaseRecord = localizedErrorRecord(),
@@ -1210,6 +1237,10 @@ class AppViewModel(
         if (!sync.isConfigured || sync.isRefreshing || sync.isUploading) {
             return
         }
+        if (sync.referenceCount <= 0) {
+            refreshScannerReferences(manual = false)
+            return
+        }
         val lastSyncAt = sync.lastReferenceSyncAt ?: 0L
         if (System.currentTimeMillis() - lastSyncAt < SCANNER_REFERENCE_REFRESH_INTERVAL_MS) {
             return
@@ -1259,7 +1290,6 @@ class AppViewModel(
     }
 
     companion object {
-        private val BARCODE_PATTERN = Regex("^[A-Z0-9_\\-/]{6,40}$")
         private const val SCANNER_REFERENCE_REFRESH_INTERVAL_MS = 120_000L
         private const val SCANNER_SOURCE_LOCAL = "LOCAL"
         private const val SCANNER_RECORD_NOT_FOUND = "NOT_FOUND"

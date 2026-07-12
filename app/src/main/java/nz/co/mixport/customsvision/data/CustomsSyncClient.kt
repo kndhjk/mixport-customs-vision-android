@@ -15,8 +15,10 @@ data class ScannerBootstrapRow(
     val cargoTrackingId: Long,
     val parentHblNo: String,
     val matchedChildHbl: String,
+    val matchedBarcodeCode: String,
     val matchedBy: String,
     val childHbls: String,
+    val barcodeCodes: String,
     val status: String,
     val customersStatus: String,
     val mpiStatus: String,
@@ -75,12 +77,14 @@ class CustomsSyncClient {
                 val item = rowsJson.optJSONObject(index) ?: continue
                 add(
                     ScannerBootstrapRow(
-                        barcodeKey = item.optString("barcode_key").trim().uppercase(),
+                        barcodeKey = normalizeScannerBarcode(item.optString("barcode_key")),
                         cargoTrackingId = item.optLong("cargo_tracking_id"),
                         parentHblNo = item.optString("parent_hbl_no"),
                         matchedChildHbl = item.optString("matched_child_hbl"),
+                        matchedBarcodeCode = item.optString("matched_barcode_code"),
                         matchedBy = item.optString("matched_by"),
                         childHbls = item.optString("child_hbls"),
+                        barcodeCodes = item.optString("barcode_codes"),
                         status = item.optString("status"),
                         customersStatus = item.optString("customers_status"),
                         mpiStatus = item.optString("mpi_status"),
@@ -114,7 +118,7 @@ class CustomsSyncClient {
 
     fun verifyBarcode(settings: ScannerSyncSettings, barcode: String): BarcodeLookupResult? {
         val payload = JSONObject().apply {
-            put("barcode", barcode.trim().uppercase())
+            put("barcode", normalizeScannerBarcode(barcode))
         }
         val response = requestJson(
             method = "POST",
@@ -134,8 +138,10 @@ class CustomsSyncClient {
             cargoTrackingId = data.optLong("id").takeIf { data.has("id") && !data.isNull("id") },
             parentHblNo = data.optString("parent_hbl_no"),
             matchedChildHbl = data.optString("matched_child_hbl").ifBlank { null },
+            matchedBarcodeCode = data.optString("matched_barcode_code").ifBlank { null },
             matchedBy = data.optString("matched_by").ifBlank { null },
             childHbls = data.optString("child_hbls").ifBlank { null },
+            barcodeCodes = data.optString("barcode_codes").ifBlank { null },
             containerNo = data.optString("container_no").ifBlank { null },
             vesselName = data.optString("vessel_name").ifBlank { null },
             company = data.optString("company").ifBlank { null },
@@ -144,6 +150,8 @@ class CustomsSyncClient {
             pkgs = data.optInt("pkgs").takeIf { data.has("pkgs") && !data.isNull("pkgs") },
             outTurnQty = data.optInt("out_turn_qty").takeIf { data.has("out_turn_qty") && !data.isNull("out_turn_qty") },
             submissionDate = data.optString("submission_date").ifBlank { null },
+            customersStatus = data.optString("customers_status").ifBlank { null },
+            mpiStatus = data.optString("mpi_status").ifBlank { null },
         )
     }
 

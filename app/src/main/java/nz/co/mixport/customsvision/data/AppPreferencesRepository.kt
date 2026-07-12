@@ -95,6 +95,18 @@ class AppPreferencesRepository(context: Context) {
     }
 
     fun getScannerSyncSettings(): ScannerSyncSettings {
+        val storedApiBaseUrl = preferences.getString(KEY_SCANNER_API_BASE_URL, null).orEmpty().trim()
+        val resolvedApiBaseUrl = storedApiBaseUrl.ifBlank { BuildConfig.DEFAULT_API_BASE_URL.trim() }
+        if (storedApiBaseUrl != resolvedApiBaseUrl && resolvedApiBaseUrl.isNotBlank()) {
+            preferences.edit().putString(KEY_SCANNER_API_BASE_URL, resolvedApiBaseUrl).apply()
+        }
+
+        val storedBearerToken = preferences.getString(KEY_SCANNER_API_BEARER_TOKEN, null).orEmpty().trim()
+        val resolvedBearerToken = storedBearerToken.ifBlank { BuildConfig.DEFAULT_API_BEARER_TOKEN.trim() }
+        if (storedBearerToken != resolvedBearerToken && resolvedBearerToken.isNotBlank()) {
+            preferences.edit().putString(KEY_SCANNER_API_BEARER_TOKEN, resolvedBearerToken).apply()
+        }
+
         val storedDeviceId = preferences.getString(KEY_SCANNER_DEVICE_ID, null).orEmpty().trim()
         val resolvedDeviceId = storedDeviceId.ifBlank {
             val androidId = Settings.Secure.getString(appContext.contentResolver, Settings.Secure.ANDROID_ID)
@@ -107,8 +119,8 @@ class AppPreferencesRepository(context: Context) {
             preferences.edit().putString(KEY_SCANNER_DEVICE_ID, resolvedDeviceId).apply()
         }
         return ScannerSyncSettings(
-            apiBaseUrl = preferences.getString(KEY_SCANNER_API_BASE_URL, BuildConfig.DEFAULT_API_BASE_URL).orEmpty(),
-            bearerToken = preferences.getString(KEY_SCANNER_API_BEARER_TOKEN, "").orEmpty(),
+            apiBaseUrl = resolvedApiBaseUrl,
+            bearerToken = resolvedBearerToken,
             deviceId = resolvedDeviceId,
         )
     }

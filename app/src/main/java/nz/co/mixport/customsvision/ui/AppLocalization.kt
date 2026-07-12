@@ -4,7 +4,10 @@ import nz.co.mixport.customsvision.data.AppLanguage
 import nz.co.mixport.customsvision.data.ScannerMatchStatus
 
 fun AppLanguage.pick(english: String, chinese: String): String {
-    return if (this == AppLanguage.CHINESE) chinese else english
+    if (this != AppLanguage.CHINESE) {
+        return english
+    }
+    return if (looksLikeMojibake(chinese)) english else chinese
 }
 
 fun localizedCargoLabel(language: AppLanguage, label: String): String {
@@ -14,48 +17,54 @@ fun localizedCargoLabel(language: AppLanguage, label: String): String {
         "Pallet candidate" -> language.pick("Pallet candidate", "托盘候选")
         "Tracked cargo" -> language.pick("Tracked cargo", "跟踪货物")
         "Electric kettle" -> language.pick("Electric kettle", "烧水壶")
-        "Cup / mug" -> language.pick("Cup / mug", "杯子/马克杯")
+        "Cup / mug" -> language.pick("Cup / mug", "杯子 / 马克杯")
         "Bowl" -> language.pick("Bowl", "碗")
-        "Chopsticks / cutlery" -> language.pick("Chopsticks / cutlery", "筷子/餐具")
-        "Pen / marker" -> language.pick("Pen / marker", "笔/记号笔")
+        "Chopsticks / cutlery" -> language.pick("Chopsticks / cutlery", "筷子 / 餐具")
+        "Pen / marker" -> language.pick("Pen / marker", "笔 / 记号笔")
         "Computer" -> language.pick("Computer", "电脑")
         "Laptop" -> language.pick("Laptop", "笔记本电脑")
-        "Notebook / book" -> language.pick("Notebook / book", "笔记本/本子")
-        "Carton / box" -> language.pick("Carton / box", "箱子/纸箱")
+        "Notebook / book" -> language.pick("Notebook / book", "笔记本 / 书本")
+        "Carton / box" -> language.pick("Carton / box", "箱子 / 纸箱")
         "Bottle" -> language.pick("Bottle", "瓶子")
         "Plate" -> language.pick("Plate", "盘子")
         "Keyboard" -> language.pick("Keyboard", "键盘")
-        "Spoon / fork" -> language.pick("Spoon / fork", "勺子/叉子")
-        "Pot / pan" -> language.pick("Pot / pan", "锅/平底锅")
+        "Spoon / fork" -> language.pick("Spoon / fork", "勺子 / 叉子")
+        "Pot / pan" -> language.pick("Pot / pan", "锅 / 平底锅")
         "Mouse / pointer" -> language.pick("Mouse / pointer", "鼠标")
-        "Phone / tablet" -> language.pick("Phone / tablet", "手机/平板")
+        "Phone / tablet" -> language.pick("Phone / tablet", "手机 / 平板")
         "Printer" -> language.pick("Printer", "打印机")
-        "Cable / charger" -> language.pick("Cable / charger", "线材/充电器")
-        "Speaker / audio" -> language.pick("Speaker / audio", "音箱/音频设备")
-        "Bag / backpack" -> language.pick("Bag / backpack", "包/背包")
+        "Cable / charger" -> language.pick("Cable / charger", "线材 / 充电器")
+        "Speaker / audio" -> language.pick("Speaker / audio", "音箱 / 音频设备")
+        "Bag / backpack" -> language.pick("Bag / backpack", "包 / 背包")
         "Suitcase / luggage" -> language.pick("Suitcase / luggage", "行李箱")
-        "Chair / stool" -> language.pick("Chair / stool", "椅子/凳子")
+        "Chair / stool" -> language.pick("Chair / stool", "椅子 / 凳子")
         "Lamp / lighting" -> language.pick("Lamp / lighting", "灯具")
-        "Fan / appliance" -> language.pick("Fan / appliance", "风扇/电器")
-        "Rice cooker / appliance" -> language.pick("Rice cooker / appliance", "电饭煲/小家电")
-        "Clothing / fabric" -> language.pick("Clothing / fabric", "衣物/布料")
-        "Toy / gift" -> language.pick("Toy / gift", "玩具/礼品")
-        "Helmet / safety gear" -> language.pick("Helmet / safety gear", "头盔/安全用具")
+        "Fan / appliance" -> language.pick("Fan / appliance", "风扇 / 电器")
+        "Rice cooker / appliance" -> language.pick("Rice cooker / appliance", "电饭煲 / 小家电")
+        "Clothing / fabric" -> language.pick("Clothing / fabric", "衣物 / 布料")
+        "Toy / gift" -> language.pick("Toy / gift", "玩具 / 礼品")
+        "Helmet / safety gear" -> language.pick("Helmet / safety gear", "头盔 / 安全用品")
         "Umbrella" -> language.pick("Umbrella", "雨伞")
-        "Tissue / paper goods" -> language.pick("Tissue / paper goods", "纸巾/纸品")
-        "Detergent / household liquids" -> language.pick("Detergent / household liquids", "清洁剂/家用液体")
+        "Tissue / paper goods" -> language.pick("Tissue / paper goods", "纸巾 / 纸品")
+        "Detergent / household liquids" -> language.pick("Detergent / household liquids", "清洁剂 / 家用液体")
         else -> normalized
     }
 }
 
 fun localizedStatus(language: AppLanguage, status: String): String {
-    return when (status.uppercase()) {
+    return when (status.trim().uppercase()) {
         "ACTIVE" -> language.pick("Active", "进行中")
         "READY_TO_COMPLETE" -> language.pick("Ready to complete", "可完成")
         "COMPLETED" -> language.pick("Completed", "已完成")
         "PAUSED" -> language.pick("Paused", "已暂停")
         "LOADING" -> language.pick("Loading", "装载中")
         "SEALED" -> language.pick("Sealed", "已封膜")
+        "AVAILABLE" -> language.pick("Available", "可用")
+        "UNAVAILABLE" -> language.pick("Unavailable", "不可用")
+        "UPLIFTED" -> language.pick("Uplifted", "已提货")
+        "HOLD" -> language.pick("Hold", "暂扣")
+        "FAILED" -> language.pick("Failed", "失败")
+        "CLEAR" -> language.pick("Clear", "放行")
         else -> status
     }
 }
@@ -65,6 +74,8 @@ fun localizedScannerSource(language: AppLanguage, source: String): String {
         "LOCAL" -> language.pick("Local scanner flow", "本地扫码流程")
         "SESSION" -> language.pick("Container session", "柜号记录")
         "PALLET_ITEM" -> language.pick("Pallet item", "托盘货物")
+        "SERVER_CACHE" -> language.pick("Offline cache", "离线缓存")
+        "SERVER_LIVE" -> language.pick("Live server check", "服务器实时校验")
         else -> source
     }
 }
@@ -79,23 +90,24 @@ fun localizedScannerDatabaseRecord(language: AppLanguage, databaseRecord: String
 
 fun localizedScannerStatusText(language: AppLanguage, status: String): String {
     return when (canonicalScannerValue(status)) {
-        "INVALID_BARCODE_FORMAT" -> language.pick("Invalid barcode format", "序列号格式无效")
+        "INVALID_BARCODE_FORMAT" -> language.pick("Invalid barcode format", "条码格式无效")
         "UNKNOWN" -> language.pick("Unknown", "未知")
         "ERROR" -> language.pick("Error", "错误")
         else -> {
+            val normalized = status.trim()
             val separator = when {
-                status.contains("Â·") -> "Â·"
-                status.contains("·") -> "·"
+                normalized.contains("·") -> "·"
+                normalized.contains("|") -> "|"
                 else -> null
             }
             if (separator == null) {
-                localizedStatus(language, status)
+                localizedStatus(language, normalized)
             } else {
-                val parts = status.split(separator, limit = 2).map(String::trim)
+                val parts = normalized.split(separator, limit = 2).map(String::trim)
                 if (parts.size == 2) {
                     "${localizedCargoLabel(language, parts[0])} $separator ${parts[1]}"
                 } else {
-                    localizedStatus(language, status)
+                    localizedStatus(language, normalized)
                 }
             }
         }
@@ -108,6 +120,15 @@ fun localizedScannerMatchStatus(language: AppLanguage, status: ScannerMatchStatu
         ScannerMatchStatus.MISMATCH -> language.pick("Not found", "未找到")
         ScannerMatchStatus.ERROR -> language.pick("Error", "错误")
         ScannerMatchStatus.WAITING -> language.pick("Waiting", "等待中")
+    }
+}
+
+fun localizedScannerMatchRoute(language: AppLanguage, matchedBy: String?): String {
+    return when (matchedBy?.trim()?.uppercase()) {
+        "BARCODE_CODE" -> language.pick("Barcode code", "条码编码")
+        "CHILD_HBL" -> language.pick("Child HBL", "子 HBL")
+        "HBL_NO" -> language.pick("Parent HBL", "主 HBL")
+        else -> language.pick("Unknown", "未知")
     }
 }
 
@@ -126,6 +147,14 @@ private fun canonicalScannerValue(value: String): String {
             normalized.equals("Pallet item", ignoreCase = true) ||
             normalized == "托盘货物" -> "PALLET_ITEM"
 
+        normalized.equals("SERVER_CACHE", ignoreCase = true) ||
+            normalized.equals("Offline cache", ignoreCase = true) ||
+            normalized == "离线缓存" -> "SERVER_CACHE"
+
+        normalized.equals("SERVER_LIVE", ignoreCase = true) ||
+            normalized.equals("Live server check", ignoreCase = true) ||
+            normalized == "服务器实时校验" -> "SERVER_LIVE"
+
         normalized.equals("NOT_FOUND", ignoreCase = true) ||
             normalized.equals("Not found", ignoreCase = true) ||
             normalized == "未找到" -> "NOT_FOUND"
@@ -140,8 +169,19 @@ private fun canonicalScannerValue(value: String): String {
 
         normalized.equals("INVALID_BARCODE_FORMAT", ignoreCase = true) ||
             normalized.equals("Invalid barcode format", ignoreCase = true) ||
-            normalized == "序列号格式无效" -> "INVALID_BARCODE_FORMAT"
+            normalized == "条码格式无效" -> "INVALID_BARCODE_FORMAT"
 
         else -> normalized
     }
+}
+
+private fun looksLikeMojibake(value: String): Boolean {
+    if (value.isBlank()) {
+        return false
+    }
+    if (value.any { it in '\u4e00'..'\u9fff' }) {
+        return false
+    }
+    val markers = listOf("Ã", "Â", "æ", "ç", "å", "è", "é", "ï", "œ", "‰", "€", "™", "¢")
+    return markers.any(value::contains)
 }

@@ -21,12 +21,19 @@ class CustomsDatabaseHelper(context: Context) :
     override fun onCreate(db: SQLiteDatabase) {
         createCoreTables(db)
         createScannerSyncTables(db)
+        ensureScannerSyncSchema(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) {
             createScannerSyncTables(db)
         }
+        ensureScannerSyncSchema(db)
+    }
+
+    override fun onOpen(db: SQLiteDatabase) {
+        super.onOpen(db)
+        ensureScannerSyncSchema(db)
     }
 
     fun createSession(draft: SessionDraft, startedAt: Long): InspectionSessionRecord {
@@ -82,7 +89,7 @@ class CustomsDatabaseHelper(context: Context) :
     }
 
     fun lookupBarcode(barcode: String): BarcodeLookupResult? {
-        val normalized = barcode.trim().uppercase()
+        val normalized = normalizeScannerBarcode(barcode)
         if (normalized.isBlank()) {
             return null
         }
@@ -377,12 +384,14 @@ class CustomsDatabaseHelper(context: Context) :
                     "server_barcode_reference",
                     null,
                     contentValuesOf(
-                        "barcode_key" to row.barcodeKey.trim().uppercase(),
+                        "barcode_key" to normalizeScannerBarcode(row.barcodeKey),
                         "cargo_tracking_id" to row.cargoTrackingId,
                         "parent_hbl_no" to row.parentHblNo,
                         "matched_child_hbl" to row.matchedChildHbl,
+                        "matched_barcode_code" to row.matchedBarcodeCode,
                         "matched_by" to row.matchedBy,
                         "child_hbls" to row.childHbls,
+                        "barcode_codes" to row.barcodeCodes,
                         "status" to row.status,
                         "customers_status" to row.customersStatus,
                         "mpi_status" to row.mpiStatus,
@@ -576,8 +585,10 @@ class CustomsDatabaseHelper(context: Context) :
                 cargo_tracking_id INTEGER NOT NULL,
                 parent_hbl_no TEXT NOT NULL,
                 matched_child_hbl TEXT NOT NULL,
+                matched_barcode_code TEXT NOT NULL DEFAULT '',
                 matched_by TEXT NOT NULL,
                 child_hbls TEXT NOT NULL,
+                barcode_codes TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL,
                 customers_status TEXT NOT NULL,
                 mpi_status TEXT NOT NULL,
@@ -625,6 +636,28 @@ class CustomsDatabaseHelper(context: Context) :
             )
             """.trimIndent(),
         )
+    }
+
+    private fun ensureScannerSyncSchema(db: SQLiteDatabase) {
+        ensureColumn(db, "server_barcode_reference", "matched_barcode_code", "TEXT NOT NULL DEFAULT ''")
+        ensureColumn(db, "server_barcode_reference", "barcode_codes", "TEXT NOT NULL DEFAULT ''")
+        ensureColumn(db, "server_barcode_reference", "customers_status", "TEXT NOT NULL DEFAULT ''")
+        ensureColumn(db, "server_barcode_reference", "mpi_status", "TEXT NOT NULL DEFAULT ''")
+        ensureColumn(db, "server_barcode_reference", "location", "TEXT NOT NULL DEFAULT ''")
+        ensureColumn(db, "server_barcode_reference", "pkgs", "INTEGER")
+        ensureColumn(db, "server_barcode_reference", "out_turn_qty", "INTEGER")
+        ensureColumn(db, "server_barcode_reference", "submission_date", "TEXT NOT NULL DEFAULT ''")
+        ensureColumn(db, "server_barcode_reference", "container_no", "TEXT NOT NULL DEFAULT ''")
+        ensureColumn(db, "server_barcode_reference", "vessel_name", "TEXT NOT NULL DEFAULT ''")
+        ensureColumn(db, "server_barcode_reference", "company", "TEXT NOT NULL DEFAULT ''")
+        ensureColumn(db, "server_barcode_reference", "customer_name", "TEXT NOT NULL DEFAULT ''")
+        ensureColumn(db, "server_barcode_reference", "updated_cursor", "TEXT NOT NULL DEFAULT ''")
+        ensureColumn(db, "server_barcode_reference", "server_scan_count", "INTEGER NOT NULL DEFAULT 0")
+        ensureColumn(db, "server_barcode_reference", "server_matched_scan_count", "INTEGER NOT NULL DEFAULT 0")
+        ensureColumn(db, "server_barcode_reference", "server_mismatch_scan_count", "INTEGER NOT NULL DEFAULT 0")
+        ensureColumn(db, "server_barcode_reference", "server_error_scan_count", "INTEGER NOT NULL DEFAULT 0")
+        ensureColumn(db, "server_barcode_reference", "server_last_scanned_at", "TEXT NOT NULL DEFAULT ''")
+        ensureColumn(db, "server_barcode_reference", "server_last_match_status", "TEXT NOT NULL DEFAULT ''")
     }
 
     private fun Cursor.toSessionRecord(): InspectionSessionRecord = InspectionSessionRecord(
@@ -678,8 +711,10 @@ class CustomsDatabaseHelper(context: Context) :
         cargoTrackingId = getLong(getColumnIndexOrThrow("cargo_tracking_id")),
         parentHblNo = getString(getColumnIndexOrThrow("parent_hbl_no")),
         matchedChildHbl = getString(getColumnIndexOrThrow("matched_child_hbl")).ifBlank { null },
+        matchedBarcodeCode = getStringOrNull(getColumnIndexOrThrow("matched_barcode_code"))?.ifBlank { null },
         matchedBy = getString(getColumnIndexOrThrow("matched_by")).ifBlank { null },
         childHbls = getString(getColumnIndexOrThrow("child_hbls")).ifBlank { null },
+        barcodeCodes = getStringOrNull(getColumnIndexOrThrow("barcode_codes"))?.ifBlank { null },
         containerNo = getString(getColumnIndexOrThrow("container_no")).ifBlank { null },
         vesselName = getString(getColumnIndexOrThrow("vessel_name")).ifBlank { null },
         company = getString(getColumnIndexOrThrow("company")).ifBlank { null },
@@ -688,6 +723,8 @@ class CustomsDatabaseHelper(context: Context) :
         pkgs = getIntOrNull("pkgs"),
         outTurnQty = getIntOrNull("out_turn_qty"),
         submissionDate = getString(getColumnIndexOrThrow("submission_date")).ifBlank { null },
+        customersStatus = getStringOrNull(getColumnIndexOrThrow("customers_status"))?.ifBlank { null },
+        mpiStatus = getStringOrNull(getColumnIndexOrThrow("mpi_status"))?.ifBlank { null },
     )
 
     private fun Cursor.toPendingScannerUploadRecord(): PendingScannerUploadRecord = PendingScannerUploadRecord(
@@ -715,8 +752,31 @@ class CustomsDatabaseHelper(context: Context) :
         return if (isNull(index)) null else getInt(index)
     }
 
+    private fun ensureColumn(
+        db: SQLiteDatabase,
+        tableName: String,
+        columnName: String,
+        definition: String,
+    ) {
+        if (!db.hasColumn(tableName, columnName)) {
+            db.execSQL("ALTER TABLE $tableName ADD COLUMN $columnName $definition")
+        }
+    }
+
+    private fun SQLiteDatabase.hasColumn(tableName: String, columnName: String): Boolean {
+        rawQuery("PRAGMA table_info($tableName)", null).use { cursor ->
+            val nameIndex = cursor.getColumnIndex("name")
+            while (cursor.moveToNext()) {
+                if (nameIndex >= 0 && cursor.getString(nameIndex).equals(columnName, ignoreCase = true)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     companion object {
         private const val DATABASE_NAME = "mixport_customs_pilot.db"
-        private const val DATABASE_VERSION = 2
+        private const val DATABASE_VERSION = 3
     }
 }

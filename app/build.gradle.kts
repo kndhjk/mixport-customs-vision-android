@@ -1,4 +1,41 @@
-﻿plugins {
+﻿val defaultApiBearerToken: String by lazy {
+    val envToken = providers.environmentVariable("CUSTOMS_SYNC_BEARER_TOKEN").orNull
+        ?.trim()
+        .orEmpty()
+    if (envToken.isNotBlank()) {
+        return@lazy envToken
+    }
+
+    val gradleToken = providers.gradleProperty("customsSyncBearerToken").orNull
+        ?.trim()
+        .orEmpty()
+    if (gradleToken.isNotBlank()) {
+        return@lazy gradleToken
+    }
+
+    val tokenFile = rootProject.file("../mixport-customs-api-token.local.txt")
+    if (!tokenFile.exists()) {
+        return@lazy ""
+    }
+
+    val lines = tokenFile.readLines()
+    val markerIndex = lines.indexOfFirst { it.trim().equals("Bearer token:", ignoreCase = true) }
+    if (markerIndex < 0) {
+        return@lazy ""
+    }
+
+    lines
+        .drop(markerIndex + 1)
+        .firstOrNull { it.isNotBlank() }
+        ?.trim()
+        .orEmpty()
+}
+
+fun String.escapeForBuildConfig(): String {
+    return replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
@@ -23,6 +60,11 @@ android {
             "String",
             "DEFAULT_API_BASE_URL",
             "\"https://private-deployment.example/api/\"",
+        )
+        buildConfigField(
+            "String",
+            "DEFAULT_API_BEARER_TOKEN",
+            "\"${defaultApiBearerToken.escapeForBuildConfig()}\"",
         )
     }
 

@@ -247,6 +247,7 @@ fun CustomsApp(viewModel: AppViewModel) {
                 uiState = uiState,
                 onScannerInputChanged = viewModel::updateScannerInput,
                 onScannerVerify = viewModel::verifyScannerBarcode,
+                onScannerAwaitingNextScan = viewModel::prepareScannerForNextScan,
                 onScannerPdaDetected = viewModel::onScannerPdaDetected,
                 onScannerSoundChanged = viewModel::setScannerSoundEnabled,
                 onScannerWorkflowModeChanged = viewModel::setScannerWorkflowMode,

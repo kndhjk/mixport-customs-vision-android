@@ -130,8 +130,10 @@ data class BarcodeLookupResult(
     val cargoTrackingId: Long? = null,
     val parentHblNo: String? = null,
     val matchedChildHbl: String? = null,
+    val matchedBarcodeCode: String? = null,
     val matchedBy: String? = null,
     val childHbls: String? = null,
+    val barcodeCodes: String? = null,
     val containerNo: String? = null,
     val vesselName: String? = null,
     val company: String? = null,
@@ -140,4 +142,6 @@ data class BarcodeLookupResult(
     val pkgs: Int? = null,
     val outTurnQty: Int? = null,
     val submissionDate: String? = null,
+    val customersStatus: String? = null,
+    val mpiStatus: String? = null,
 )
