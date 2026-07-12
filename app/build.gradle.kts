@@ -48,8 +48,8 @@ android {
         applicationId = "nz.co.mixport.customsvision"
         minSdk = 26
         targetSdk = 34
-        versionCode = 7
-        versionName = "0.6.1"
+        versionCode = 8
+        versionName = "0.6.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
