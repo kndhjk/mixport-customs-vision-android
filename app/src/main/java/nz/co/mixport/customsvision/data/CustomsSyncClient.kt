@@ -4,6 +4,7 @@ import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.IOException
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
@@ -135,31 +136,31 @@ class CustomsSyncClient {
             return BarcodeVerificationResponse(found = false)
         }
         val data = response.optJSONObject("data")
-        val lookupResult = data?.let {
+        val lookupResult = data?.let { dataJson ->
             BarcodeLookupResult(
                 found = true,
-                databaseRecord = it.optString("parent_hbl_no").ifBlank { it.optString("barcode") },
-                status = it.optString("status"),
+                databaseRecord = dataJson.optString("parent_hbl_no").ifBlank { dataJson.optString("barcode") },
+                status = dataJson.optString("status"),
                 source = "SERVER_LIVE",
-                cargoTrackingId = it.optLong("id").takeIf { value -> it.has("id") && !it.isNull("id") },
-                parentHblNo = it.optString("parent_hbl_no"),
-                matchedChildHbl = it.optString("matched_child_hbl").ifBlank { null },
-                matchedBarcodeCode = it.optString("matched_barcode_code").ifBlank { null },
-                matchedBy = it.optString("matched_by").ifBlank { null },
-                childHbls = it.optString("child_hbls").ifBlank { null },
-                barcodeCodes = it.optString("barcode_codes").ifBlank { null },
-                containerNo = it.optString("container_no").ifBlank { null },
-                vesselName = it.optString("vessel_name").ifBlank { null },
-                company = it.optString("company").ifBlank { null },
-                customerName = it.optString("customer_name").ifBlank { null },
-                location = it.optString("location").ifBlank { null },
-                pkgs = it.optInt("pkgs").takeIf { value -> it.has("pkgs") && !it.isNull("pkgs") },
-                outTurnQty = it.optInt("out_turn_qty").takeIf { value ->
-                    it.has("out_turn_qty") && !it.isNull("out_turn_qty")
+                cargoTrackingId = dataJson.optLong("id").takeIf { dataJson.has("id") && !dataJson.isNull("id") },
+                parentHblNo = dataJson.optString("parent_hbl_no"),
+                matchedChildHbl = dataJson.optString("matched_child_hbl").ifBlank { null },
+                matchedBarcodeCode = dataJson.optString("matched_barcode_code").ifBlank { null },
+                matchedBy = dataJson.optString("matched_by").ifBlank { null },
+                childHbls = dataJson.optString("child_hbls").ifBlank { null },
+                barcodeCodes = dataJson.optString("barcode_codes").ifBlank { null },
+                containerNo = dataJson.optString("container_no").ifBlank { null },
+                vesselName = dataJson.optString("vessel_name").ifBlank { null },
+                company = dataJson.optString("company").ifBlank { null },
+                customerName = dataJson.optString("customer_name").ifBlank { null },
+                location = dataJson.optString("location").ifBlank { null },
+                pkgs = dataJson.optInt("pkgs").takeIf { dataJson.has("pkgs") && !dataJson.isNull("pkgs") },
+                outTurnQty = dataJson.optInt("out_turn_qty").takeIf {
+                    dataJson.has("out_turn_qty") && !dataJson.isNull("out_turn_qty")
                 },
-                submissionDate = it.optString("submission_date").ifBlank { null },
-                customersStatus = it.optString("customers_status").ifBlank { null },
-                mpiStatus = it.optString("mpi_status").ifBlank { null },
+                submissionDate = dataJson.optString("submission_date").ifBlank { null },
+                customersStatus = dataJson.optString("customers_status").ifBlank { null },
+                mpiStatus = dataJson.optString("mpi_status").ifBlank { null },
             )
         }
         return BarcodeVerificationResponse(
@@ -225,7 +226,9 @@ class CustomsSyncClient {
     }
 
     private fun endpointUrl(baseUrl: String, relativePath: String): String {
-        val normalizedBase = baseUrl.trim().ifBlank { throw IllegalArgumentException("API base URL is required.") }
+        val normalizedBase = baseUrl.trim().ifBlank {
+            throw CustomsSyncConfigurationException("Sync endpoint is required.")
+        }
         val parsed = Uri.parse(if (normalizedBase.endsWith("/")) normalizedBase else "$normalizedBase/")
         val base = parsed.toString()
         return if (relativePath.startsWith("/")) {
@@ -267,11 +270,21 @@ class CustomsSyncClient {
             val responseText = stream?.use { input ->
                 BufferedReader(InputStreamReader(input, StandardCharsets.UTF_8)).readText()
             }.orEmpty()
-            val json = if (responseText.isBlank()) JSONObject() else JSONObject(responseText)
+            val json = try {
+                if (responseText.isBlank()) JSONObject() else JSONObject(responseText)
+            } catch (throwable: Exception) {
+                throw CustomsSyncParsingException("Sync response could not be parsed.", throwable)
+            }
             if (code !in 200..299 || !json.optBoolean("ok", code in 200..299)) {
-                throw IllegalStateException(json.optString("error").ifBlank { "HTTP $code" })
+                throw CustomsSyncRemoteException(json.optString("error").ifBlank { "HTTP $code" })
             }
             return json
+        } catch (throwable: CustomsSyncException) {
+            throw throwable
+        } catch (throwable: IOException) {
+            throw CustomsSyncTransportException("Unable to reach the sync service.", throwable)
+        } catch (throwable: Exception) {
+            throw CustomsSyncRemoteException("Unexpected sync failure.", throwable)
         } finally {
             connection.disconnect()
         }

@@ -282,7 +282,7 @@ class HikPdaPreviewController(
                     errorMessage = null,
                 )
             }
-        } catch (throwable: Throwable) {
+        } catch (throwable: Exception) {
             _state.update {
                 it.copy(
                     errorMessage = throwable.message ?: "Unable to decode PDA preview frame.",

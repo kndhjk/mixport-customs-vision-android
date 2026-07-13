@@ -42,13 +42,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import nz.co.mixport.customsvision.BuildConfig
 import nz.co.mixport.customsvision.data.AppLanguage
 import nz.co.mixport.customsvision.data.normalizeScannerBarcode
 import nz.co.mixport.customsvision.data.ScannerMatchStatus
@@ -81,9 +79,6 @@ fun ScannerScreen(
     onScannerWorkflowModeChanged: (PdaScanWorkflowMode) -> Unit,
     onScannerHistoryCleared: () -> Unit,
     onScannerOnboardingDismissed: () -> Unit,
-    onScannerApiBaseUrlChanged: (String) -> Unit,
-    onScannerBearerTokenChanged: (String) -> Unit,
-    onScannerDeviceIdChanged: (String) -> Unit,
     onScannerRefreshReferences: (Boolean) -> Unit,
     onScannerUploadPending: () -> Unit,
 ) {
@@ -348,9 +343,6 @@ fun ScannerScreen(
             ScannerSyncCard(
                 language = language,
                 scanner = scanner,
-                onApiBaseUrlChanged = onScannerApiBaseUrlChanged,
-                onBearerTokenChanged = onScannerBearerTokenChanged,
-                onDeviceIdChanged = onScannerDeviceIdChanged,
                 onRefreshReferences = { onScannerRefreshReferences(true) },
                 onUploadPending = onScannerUploadPending,
             )
@@ -670,9 +662,6 @@ private fun ScannerResultCard(
 private fun ScannerSyncCard(
     language: AppLanguage,
     scanner: ScannerUiState,
-    onApiBaseUrlChanged: (String) -> Unit,
-    onBearerTokenChanged: (String) -> Unit,
-    onDeviceIdChanged: (String) -> Unit,
     onRefreshReferences: () -> Unit,
     onUploadPending: () -> Unit,
 ) {
@@ -689,8 +678,8 @@ private fun ScannerSyncCard(
             )
             Text(
                 text = language.pick(
-                    "Pull the latest HBL scanner cache from the Mixport server, keep scanning offline, then upload the completed result batch manually.",
-                    "先从 Mixport 服务器拉取最新 HBL 扫码缓存，离线继续扫描，全部完成后再由工作人员手动上传结果批次。",
+                    "Refresh the private scanner cache when this build has been provisioned. Online scans upload automatically, while offline scans stay queued locally.",
+                    "当当前构建已预置私有同步配置时，可刷新扫码缓存；有网络时扫码会自动上传，无网络时则保留在本地队列。",
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -707,82 +696,67 @@ private fun ScannerSyncCard(
                     value = sync.pendingUploadCount.toString(),
                     color = if (sync.pendingUploadCount > 0) ScannerWarn else ScannerIdle,
                 )
+                ScannerMiniStat(
+                    label = language.pick("Link", "网络"),
+                    value = when (sync.networkAvailable) {
+                        true -> language.pick("Online", "在线")
+                        false -> language.pick("Offline", "离线")
+                        null -> language.pick("Profile", "配置")
+                    },
+                    color = when (sync.networkAvailable) {
+                        true -> ScannerOk
+                        false -> ScannerWarn
+                        null -> ScannerIdle
+                    },
+                )
             }
 
-            if (BuildConfig.DEBUG) {
-                OutlinedTextField(
-                    value = sync.apiBaseUrl,
-                    onValueChange = onApiBaseUrlChanged,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(language.pick("API base URL", "API 地址")) },
-                    singleLine = true,
-                    enabled = !sync.isRefreshing && !sync.isUploading,
-                )
-                OutlinedTextField(
-                    value = sync.bearerToken,
-                    onValueChange = onBearerTokenChanged,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(language.pick("Bearer token", "Bearer 令牌")) },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    enabled = !sync.isRefreshing && !sync.isUploading,
-                )
-                OutlinedTextField(
-                    value = sync.deviceId,
-                    onValueChange = onDeviceIdChanged,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(language.pick("Device ID", "设备 ID")) },
-                    singleLine = true,
-                    enabled = !sync.isRefreshing && !sync.isUploading,
-                )
-            } else {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = ScannerPanelTint,
-                    ),
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = ScannerPanelTint,
+                ),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            text = language.pick("Secure scanner profile", "安全扫码配置"),
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = if (sync.isConfigured) {
-                                language.pick(
-                                    "This release build already includes the private sync profile. Staff do not need to view or enter server credentials here.",
-                                    "当前 release 已内置 Mixport 扫码配置，工作人员无需在这里查看或输入服务器凭据。",
-                                )
-                            } else {
-                                language.pick(
-                                    "This build is missing a provisioned scanner profile. Rebuild it with the private sync credential before production use.",
-                                    "当前构建未预置扫码配置，正式使用前需要重新打包并写入 Mixport 服务器令牌。",
-                                )
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    Text(
+                        text = language.pick("Private sync profile", "私有同步配置"),
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = if (sync.isConfigured) {
+                            language.pick(
+                                "This device has a secure sync profile. Endpoint and token values stay outside the operator UI and are not compiled into the public repository build.",
+                                "当前设备已完成安全同步配置，地址和令牌不会出现在工作人员界面，也不会编译进公开仓库构建。",
+                            )
+                        } else {
+                            language.pick(
+                                "This build is waiting for a secure device profile before live sync can start.",
+                                "当前构建仍在等待安全设备配置，完成前不会启用在线同步。",
+                            )
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-                ScannerDetailRow(
-                    label = language.pick("Provisioning", "配置状态"),
-                    value = if (sync.isConfigured) {
-                        language.pick("Provisioned in secure build", "已内置到安全构建")
-                    } else {
-                        language.pick("Provisioning missing", "缺少预置配置")
-                    },
-                )
-                ScannerDetailRow(
-                    label = language.pick("Device ID", "设备 ID"),
-                    value = sync.deviceId.ifBlank {
-                        language.pick("Not assigned", "未分配")
-                    },
-                )
             }
+            ScannerDetailRow(
+                label = language.pick("Provisioning", "配置状态"),
+                value = if (sync.isConfigured) {
+                    language.pick("Secure device profile installed", "已安装安全设备配置")
+                } else {
+                    language.pick("Provisioning required", "需要先完成设备配置")
+                },
+            )
+            ScannerDetailRow(
+                label = language.pick("Device ID", "设备 ID"),
+                value = sync.deviceId.ifBlank {
+                    language.pick("Not assigned", "未分配")
+                },
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -833,7 +807,7 @@ private fun ScannerSyncCard(
                 value = syncTime,
             )
             ScannerDetailRow(
-                label = language.pick("Last manual upload", "上次手动上传"),
+                label = language.pick("Last server upload", "上次服务端上传"),
                 value = if (sync.lastUploadBatchId != null) {
                     "$uploadTime · #${sync.lastUploadBatchId}"
                 } else {

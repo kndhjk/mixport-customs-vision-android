@@ -1,6 +1,8 @@
-﻿# Pilot API Contract
+﻿# Private Sync Interface Summary
 
-This document describes the server contract for syncing the Android pilot app into the same Mixport company environment that already hosts the cargo dashboard.
+This document keeps only the public-facing contract shape for the Android scanner sync workflow.
+
+Concrete deployment URLs, auth sources, dashboard integration details, and server file layout are intentionally omitted from this public repository.
 
 ## Base URL
 
@@ -8,12 +10,7 @@ This document describes the server contract for syncing the Android pilot app in
 
 ## Auth
 
-For the pilot, use server-issued bearer tokens tied to a authorized ops account. Do not ship database credentials in the Android app.
-
-The current private PHP implementation also allows an authenticated authorized ops web session for browser-side testing. Bearer tokens can be supplied from either:
-
-- the server environment variable `CUSTOMS_SYNC_BEARER_TOKEN`
-- the private company setting row `private deployment setting row`
+Use deployment-specific server credentials that are provisioned outside the public repo. Do not ship database credentials in the Android app and do not expose private sync credentials in the worker-facing UI.
 
 ## Endpoints
 
@@ -50,7 +47,7 @@ Response:
       "status": "available",
       "container_no": "MSCU1234567",
       "vessel_name": "Tauranga Express",
-      "company": "Mixport Pilot"
+      "company": "Pilot Customer"
     },
     {
       "barcode_key": "VAN1413050612",
@@ -62,7 +59,7 @@ Response:
       "status": "available",
       "container_no": "MSCU1234567",
       "vessel_name": "Tauranga Express",
-      "company": "Mixport Pilot"
+      "company": "Pilot Customer"
     }
   ],
   "synced_at": "2026-07-12T09:14:33Z"
@@ -71,7 +68,7 @@ Response:
 
 ### `POST /scanner-sync/upload`
 
-Upload a completed local scanner batch after staff decide the offline queue is ready to sync back into the pilot company environment.
+Upload a completed local scanner batch after staff decide the offline queue is ready to sync back into the private deployment environment.
 
 Request:
 
@@ -96,7 +93,7 @@ Request:
       "matchedBy": "child_hbl",
       "containerNo": "MSCU1234567",
       "vesselName": "Tauranga Express",
-      "company": "Mixport Pilot",
+      "company": "Pilot Customer",
       "location": "A-12"
     }
   ]
@@ -133,7 +130,7 @@ Response:
     "status": "available",
     "container_no": "MSCU1234567",
     "vessel_name": "Tauranga Express",
-    "company": "Mixport Pilot",
+    "company": "Pilot Customer",
     "location": "A-12"
   }
 }
@@ -210,13 +207,6 @@ Request:
 ### `POST /sessions/{sessionId}/video-upload-ticket`
 
 Optional future endpoint returning a pre-signed upload target for long videos if the pilot moves off direct MediaStore-only handling.
-
-## Recommended PHP placement
-
-- `private-sync/index.php`
-- `private-sync/.htaccess`
-- shared auth bootstrap from the existing Mixport PHP stack
-- MySQL access through the same shared DB connection layer pattern used by `shared/db-connection.php`
 
 ## Recommended server-side validations
 

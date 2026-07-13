@@ -1,5 +1,6 @@
 package nz.co.mixport.customsvision
 
+import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
@@ -35,9 +36,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import nz.co.mixport.customsvision.scanner.PdaHardwareKeyDispatcher
 import nz.co.mixport.customsvision.data.AppLanguage
 import nz.co.mixport.customsvision.data.AppPreferencesRepository
+import nz.co.mixport.customsvision.scanner.PdaHardwareKeyDispatcher
 import nz.co.mixport.customsvision.ui.AppViewModel
 import nz.co.mixport.customsvision.ui.AppViewModelFactory
 import nz.co.mixport.customsvision.ui.CustomsApp
@@ -58,6 +59,11 @@ class MainActivity : ComponentActivity() {
             }
         }
         Log.i(STARTUP_TAG, "MainActivity.setContent scheduled at ${SystemClock.elapsedRealtime()} ms")
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {

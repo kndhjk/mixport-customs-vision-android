@@ -4,12 +4,12 @@ import android.content.Context
 import android.provider.Settings
 import org.json.JSONArray
 import org.json.JSONObject
-import nz.co.mixport.customsvision.BuildConfig
 import nz.co.mixport.customsvision.scanner.PdaScanWorkflowMode
 
 class AppPreferencesRepository(context: Context) {
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val secureSyncStore = SecureSyncProvisioningStore(appContext)
 
     fun getLanguage(): AppLanguage {
         return AppLanguage.fromCode(preferences.getString(KEY_LANGUAGE, AppLanguage.ENGLISH.code))
@@ -99,20 +99,6 @@ class AppPreferencesRepository(context: Context) {
     }
 
     fun getScannerSyncSettings(): ScannerSyncSettings {
-        val defaultApiBaseUrl = BuildConfig.DEFAULT_API_BASE_URL.trim()
-        val storedApiBaseUrl = preferences.getString(KEY_SCANNER_API_BASE_URL, null).orEmpty().trim()
-        val resolvedApiBaseUrl = storedApiBaseUrl.ifBlank { defaultApiBaseUrl }
-        if (storedApiBaseUrl.isNotBlank() && storedApiBaseUrl == defaultApiBaseUrl) {
-            preferences.edit().remove(KEY_SCANNER_API_BASE_URL).apply()
-        }
-
-        val defaultBearerToken = BuildConfig.DEFAULT_API_BEARER_TOKEN.trim()
-        val storedBearerToken = preferences.getString(KEY_SCANNER_API_BEARER_TOKEN, null).orEmpty().trim()
-        val resolvedBearerToken = storedBearerToken.ifBlank { defaultBearerToken }
-        if (storedBearerToken.isNotBlank() && storedBearerToken == defaultBearerToken) {
-            preferences.edit().remove(KEY_SCANNER_API_BEARER_TOKEN).apply()
-        }
-
         val storedDeviceId = preferences.getString(KEY_SCANNER_DEVICE_ID, null).orEmpty().trim()
         val resolvedDeviceId = storedDeviceId.ifBlank {
             val androidId = Settings.Secure.getString(appContext.contentResolver, Settings.Secure.ANDROID_ID)
@@ -124,23 +110,51 @@ class AppPreferencesRepository(context: Context) {
         if (storedDeviceId != resolvedDeviceId) {
             preferences.edit().putString(KEY_SCANNER_DEVICE_ID, resolvedDeviceId).apply()
         }
-        return ScannerSyncSettings(
-            apiBaseUrl = resolvedApiBaseUrl,
-            bearerToken = resolvedBearerToken,
-            deviceId = resolvedDeviceId,
-        )
-    }
-
-    fun setScannerApiBaseUrl(value: String) {
-        preferences.edit().putString(KEY_SCANNER_API_BASE_URL, value.trim()).apply()
-    }
-
-    fun setScannerApiBearerToken(value: String) {
-        preferences.edit().putString(KEY_SCANNER_API_BEARER_TOKEN, value.trim()).apply()
+        return secureSyncStore.loadSyncSettings(deviceId = resolvedDeviceId)
     }
 
     fun setScannerDeviceId(value: String) {
         preferences.edit().putString(KEY_SCANNER_DEVICE_ID, value.trim()).apply()
+    }
+
+    fun saveScannerSyncProvisioning(
+        apiBaseUrl: String,
+        bearerToken: String,
+        deviceId: String? = null,
+    ) {
+        secureSyncStore.saveProvisioning(
+            apiBaseUrl = apiBaseUrl,
+            bearerToken = bearerToken,
+        )
+        deviceId?.let(::setScannerDeviceId)
+    }
+
+    fun clearScannerSyncProvisioning() {
+        secureSyncStore.clearProvisioning()
+    }
+
+    fun resetScannerSyncRuntimeState(clearHistory: Boolean) {
+        preferences.edit().apply {
+            remove(KEY_SCANNER_LAST_REFERENCE_SYNC_AT)
+            remove(KEY_SCANNER_LAST_REFERENCE_CURSOR)
+            remove(KEY_SCANNER_LAST_UPLOAD_AT)
+            remove(KEY_SCANNER_LAST_UPLOAD_BATCH_ID)
+            if (clearHistory) {
+                remove(KEY_SCANNER_HISTORY)
+            }
+        }.apply()
+    }
+
+    fun recordScannerSyncProvisioningAudit(
+        host: String,
+        deviceId: String,
+        provisionedAt: Long,
+    ) {
+        preferences.edit()
+            .putString(KEY_SCANNER_LAST_PROVISIONED_HOST, host.trim())
+            .putString(KEY_SCANNER_LAST_PROVISIONED_DEVICE_ID, deviceId.trim())
+            .putLong(KEY_SCANNER_LAST_PROVISIONED_AT, provisionedAt)
+            .apply()
     }
 
     fun getScannerLastReferenceSyncAt(): Long? {
@@ -193,12 +207,13 @@ class AppPreferencesRepository(context: Context) {
         private const val KEY_SCANNER_WORKFLOW_MODE = "scanner_workflow_mode"
         private const val KEY_SCANNER_ONBOARDING_DISMISSED = "scanner_onboarding_dismissed"
         private const val KEY_SCANNER_HISTORY = "scanner_history"
-        private const val KEY_SCANNER_API_BASE_URL = "scanner_api_base_url"
-        private const val KEY_SCANNER_API_BEARER_TOKEN = "scanner_api_bearer_token"
         private const val KEY_SCANNER_DEVICE_ID = "scanner_device_id"
         private const val KEY_SCANNER_LAST_REFERENCE_SYNC_AT = "scanner_last_reference_sync_at"
         private const val KEY_SCANNER_LAST_REFERENCE_CURSOR = "scanner_last_reference_cursor"
         private const val KEY_SCANNER_LAST_UPLOAD_AT = "scanner_last_upload_at"
         private const val KEY_SCANNER_LAST_UPLOAD_BATCH_ID = "scanner_last_upload_batch_id"
+        private const val KEY_SCANNER_LAST_PROVISIONED_HOST = "scanner_last_provisioned_host"
+        private const val KEY_SCANNER_LAST_PROVISIONED_DEVICE_ID = "scanner_last_provisioned_device_id"
+        private const val KEY_SCANNER_LAST_PROVISIONED_AT = "scanner_last_provisioned_at"
     }
 }

@@ -89,7 +89,15 @@ data class ScannerSyncSettings(
     val apiBaseUrl: String = "",
     val bearerToken: String = "",
     val deviceId: String = "",
-)
+) {
+    fun hasPrivateProfile(): Boolean {
+        return apiBaseUrl.isNotBlank() && bearerToken.isNotBlank()
+    }
+
+    fun isConfigured(): Boolean {
+        return hasPrivateProfile() && deviceId.isNotBlank()
+    }
+}
 
 data class ScannerSyncStatus(
     val referenceCount: Int = 0,
@@ -97,6 +105,20 @@ data class ScannerSyncStatus(
     val lastReferenceSyncAt: Long? = null,
     val lastUploadAt: Long? = null,
     val lastUploadBatchId: Long? = null,
+)
+
+enum class ScannerAutoUploadState {
+    UPLOADED,
+    CACHED_OFFLINE,
+    CACHED_UNCONFIGURED,
+    CACHED_UPLOAD_FAILED,
+}
+
+data class ScannerAutoUploadResult(
+    val status: ScannerSyncStatus,
+    val state: ScannerAutoUploadState,
+    val networkAvailable: Boolean? = null,
+    val errorMessage: String? = null,
 )
 
 data class ScannerReferenceRefreshResult(

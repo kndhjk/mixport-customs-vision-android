@@ -95,6 +95,7 @@ private val BrandGradientStart = Color(0xFFF45D22)
 private val BrandGradientEnd = Color(0xFFD94D1A)
 private val BrandTint = Color(0xFFFFF3EB)
 private const val ScannerAutoRefreshIntervalMs = 120_000L
+private const val ScannerAutoUploadRetryIntervalMs = 15_000L
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -124,8 +125,7 @@ fun CustomsApp(viewModel: AppViewModel) {
 
     LaunchedEffect(
         uiState.selectedDestination,
-        uiState.scanner.sync.apiBaseUrl,
-        uiState.scanner.sync.bearerToken,
+        uiState.scanner.sync.isProvisioned,
         uiState.scanner.sync.deviceId,
     ) {
         if (uiState.selectedDestination != AppDestination.SCANNER || !uiState.scanner.sync.isConfigured) {
@@ -134,6 +134,21 @@ fun CustomsApp(viewModel: AppViewModel) {
         while (true) {
             delay(ScannerAutoRefreshIntervalMs)
             viewModel.refreshScannerReferences(manual = false)
+        }
+    }
+
+    LaunchedEffect(
+        uiState.selectedDestination,
+        uiState.scanner.sync.isProvisioned,
+        uiState.scanner.sync.deviceId,
+    ) {
+        if (uiState.selectedDestination != AppDestination.SCANNER || !uiState.scanner.sync.isConfigured) {
+            return@LaunchedEffect
+        }
+        viewModel.refreshScannerConnectionState()
+        while (true) {
+            viewModel.maybeAutoUploadPendingScannerScans()
+            delay(ScannerAutoUploadRetryIntervalMs)
         }
     }
 
@@ -252,9 +267,6 @@ fun CustomsApp(viewModel: AppViewModel) {
                 onScannerWorkflowModeChanged = viewModel::setScannerWorkflowMode,
                 onScannerHistoryCleared = viewModel::clearScannerHistory,
                 onScannerOnboardingDismissed = viewModel::dismissScannerOnboarding,
-                onScannerApiBaseUrlChanged = viewModel::updateScannerApiBaseUrl,
-                onScannerBearerTokenChanged = viewModel::updateScannerBearerToken,
-                onScannerDeviceIdChanged = viewModel::updateScannerDeviceId,
                 onScannerRefreshReferences = viewModel::refreshScannerReferences,
                 onScannerUploadPending = viewModel::uploadPendingScannerScans,
             )
@@ -405,9 +417,6 @@ private fun LiveScreen(
         }
         item {
             EventFeedCard(uiState = uiState, language = uiState.appLanguage)
-        }
-        item {
-            EndpointCard(language = uiState.appLanguage)
         }
     }
 }
@@ -1855,36 +1864,6 @@ private fun EventFeedCard(
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun EndpointCard(language: nz.co.mixport.customsvision.data.AppLanguage) {
-    ElevatedCard {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                language.pick("Pilot Sync Profile", "试点同步配置"),
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Text(
-                text = language.pick(
-                    "The scanner workflow now syncs through the same Mixport server stack, while the app still keeps database credentials out of the client.",
-                    "扫码流程现在已经通过同一套 Mixport 服务器体系同步，但客户端依然不会直接保存数据库凭据。",
-                ),
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                text = language.pick(
-                    "Release builds use a provisioned Mixport sync profile and keep scanner credentials out of the worker-facing UI.",
-                    "Release 构建会使用预置的 Mixport 同步配置，并且不会在工作人员界面暴露扫码凭据。",
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }

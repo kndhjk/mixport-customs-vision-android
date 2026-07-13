@@ -8,6 +8,7 @@
 
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <uses-feature
         android:name="android.hardware.camera.any"
@@ -15,7 +16,7 @@
 
     <application
         android:name=".CustomsApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
@@ -37,6 +38,26 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".admin.SyncProvisioningActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:theme="@style/Theme.MixportCustoms" />
+        <activity-alias
+            android:name=".admin.ExternalSyncProvisioningAlias"
+            android:enabled="${syncProvisioningAliasEnabled}"
+            android:excludeFromRecents="true"
+            android:exported="${syncProvisioningAliasExported}"
+            android:noHistory="true"
+            android:targetActivity=".admin.SyncProvisioningActivity"
+            android:theme="@style/Theme.MixportCustoms">
+            <intent-filter>
+                <action android:name="nz.co.mixport.customsvision.action.APPLY_SYNC_PROVISIONING" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
     </application>
 
 </manifest>

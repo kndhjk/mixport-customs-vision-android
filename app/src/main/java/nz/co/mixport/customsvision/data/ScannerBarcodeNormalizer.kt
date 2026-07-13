@@ -4,7 +4,6 @@ private const val MIN_SCANNER_BARCODE_LENGTH = 4
 private const val MAX_SCANNER_BARCODE_LENGTH = 64
 
 fun normalizeScannerBarcode(rawValue: String): String {
-    NativeScannerBridge.normalizeBarcodeOrNull(rawValue)?.let { return it }
     return normalizeScannerBarcodeFallback(rawValue)
 }
 

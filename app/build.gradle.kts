@@ -1,38 +1,77 @@
-﻿val defaultApiBearerToken: String by lazy {
-    val envToken = providers.environmentVariable("CUSTOMS_SYNC_BEARER_TOKEN").orNull
+import java.util.Properties
+
+val releaseSigningProperties: Properties by lazy {
+    Properties().apply {
+        val localFile = rootProject.file("release-signing.local.properties")
+        if (localFile.exists()) {
+            localFile.inputStream().use(::load)
+        }
+    }
+}
+
+fun resolvePrivateBuildValue(
+    environmentName: String,
+    gradlePropertyName: String,
+    localPropertyName: String,
+): String {
+    val environmentValue = providers.environmentVariable(environmentName).orNull
         ?.trim()
         .orEmpty()
-    if (envToken.isNotBlank()) {
-        return@lazy envToken
+    if (environmentValue.isNotBlank()) {
+        return environmentValue
     }
 
-    val gradleToken = providers.gradleProperty("customsSyncBearerToken").orNull
+    val gradleValue = providers.gradleProperty(gradlePropertyName).orNull
         ?.trim()
         .orEmpty()
-    if (gradleToken.isNotBlank()) {
-        return@lazy gradleToken
+    if (gradleValue.isNotBlank()) {
+        return gradleValue
     }
 
-    val tokenFile = rootProject.file("../mixport-customs-api-token.local.txt")
-    if (!tokenFile.exists()) {
-        return@lazy ""
-    }
-
-    val lines = tokenFile.readLines()
-    val markerIndex = lines.indexOfFirst { it.trim().equals("Bearer token:", ignoreCase = true) }
-    if (markerIndex < 0) {
-        return@lazy ""
-    }
-
-    lines
-        .drop(markerIndex + 1)
-        .firstOrNull { it.isNotBlank() }
+    return releaseSigningProperties.getProperty(localPropertyName)
         ?.trim()
         .orEmpty()
 }
 
-fun String.escapeForBuildConfig(): String {
-    return replace("\\", "\\\\").replace("\"", "\\\"")
+val releaseStoreFilePath: String by lazy {
+    resolvePrivateBuildValue(
+        environmentName = "ANDROID_RELEASE_STORE_FILE",
+        gradlePropertyName = "androidReleaseStoreFile",
+        localPropertyName = "storeFile",
+    )
+}
+
+val releaseStorePassword: String by lazy {
+    resolvePrivateBuildValue(
+        environmentName = "ANDROID_RELEASE_STORE_PASSWORD",
+        gradlePropertyName = "androidReleaseStorePassword",
+        localPropertyName = "storePassword",
+    )
+}
+
+val releaseKeyAlias: String by lazy {
+    resolvePrivateBuildValue(
+        environmentName = "ANDROID_RELEASE_KEY_ALIAS",
+        gradlePropertyName = "androidReleaseKeyAlias",
+        localPropertyName = "keyAlias",
+    )
+}
+
+val releaseKeyPassword: String by lazy {
+    resolvePrivateBuildValue(
+        environmentName = "ANDROID_RELEASE_KEY_PASSWORD",
+        gradlePropertyName = "androidReleaseKeyPassword",
+        localPropertyName = "keyPassword",
+    )
+}
+
+val hasReleaseSigning: Boolean by lazy {
+    listOf(
+        releaseStoreFilePath,
+        releaseStorePassword,
+        releaseKeyAlias,
+        releaseKeyPassword,
+    ).all(String::isNotBlank) && rootProject.file(releaseStoreFilePath).exists()
 }
 
 plugins {
@@ -43,46 +82,55 @@ plugins {
 android {
     namespace = "nz.co.mixport.customsvision"
     compileSdk = 34
-    ndkVersion = "26.1.10909125"
+    flavorDimensions += "distribution"
 
     defaultConfig {
         applicationId = "nz.co.mixport.customsvision"
         minSdk = 26
         targetSdk = 34
-        versionCode = 12
-        versionName = "0.6.7"
+        versionCode = 13
+        versionName = "0.6.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
-        externalNativeBuild {
-            cmake {
-                arguments += listOf("-DANDROID_STL=none")
+    }
+
+    productFlavors {
+        create("public") {
+            dimension = "distribution"
+            manifestPlaceholders["syncProvisioningAliasEnabled"] = "false"
+            manifestPlaceholders["syncProvisioningAliasExported"] = "false"
+            resValue("string", "sync_distribution_channel", "public")
+        }
+        create("field") {
+            dimension = "distribution"
+            manifestPlaceholders["syncProvisioningAliasEnabled"] = "true"
+            manifestPlaceholders["syncProvisioningAliasExported"] = "true"
+            resValue("string", "sync_distribution_channel", "field")
+            versionNameSuffix = "-field"
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            if (hasReleaseSigning) {
+                storeFile = rootProject.file(releaseStoreFilePath)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
             }
         }
-
-        buildConfigField(
-            "String",
-            "DEFAULT_API_BASE_URL",
-            "\"https://private-deployment.example/api/\"",
-        )
-        buildConfigField(
-            "String",
-            "DEFAULT_API_BEARER_TOKEN",
-            "\"${defaultApiBearerToken.escapeForBuildConfig()}\"",
-        )
     }
 
     buildTypes {
         release {
-            // Pilot release stays installable without managing a separate signing key yet.
-            signingConfig = signingConfigs.getByName("debug")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
-            ndk {
-                debugSymbolLevel = "NONE"
-            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -101,31 +149,20 @@ android {
 
     buildFeatures {
         compose = true
-        buildConfig = true
-    }
-
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-        }
     }
 
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.14"
     }
 
+    lint {
+        abortOnError = true
+        checkReleaseBuilds = true
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        }
-    }
-
-    splits {
-        abi {
-            isEnable = true
-            reset()
-            include("arm64-v8a", "armeabi-v7a")
-            isUniversalApk = false
         }
     }
 }
@@ -166,4 +203,3 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
-

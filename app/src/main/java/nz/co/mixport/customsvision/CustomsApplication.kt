@@ -41,11 +41,19 @@ class CustomsApplication : Application() {
         }
     }
 
+    fun invalidateBootstrapPayload() {
+        synchronized(this) {
+            bootstrapPayload = null
+        }
+    }
+
     private fun buildBootstrapPayload(): AppBootstrapPayload {
         val preferencesRepository = AppPreferencesRepository(this)
         val loadedInspectionTuning = InspectionTuningLoader(this).load()
+        val scannerSyncSettings = preferencesRepository.getScannerSyncSettings()
         return AppBootstrapPayload(
             repository = PilotRepository(
+                appContext = this,
                 databaseHelper = CustomsDatabaseHelper(this),
                 syncClient = CustomsSyncClient(),
             ),
@@ -59,7 +67,8 @@ class CustomsApplication : Application() {
                 scannerWorkflowMode = PdaScanWorkflowMode.TRIGGER_ONCE,
                 scannerOnboardingDismissed = preferencesRepository.isScannerOnboardingDismissed(),
                 scannerHistory = preferencesRepository.getScannerHistory(),
-                scannerSyncSettings = preferencesRepository.getScannerSyncSettings(),
+                scannerSyncProvisioned = scannerSyncSettings.hasPrivateProfile(),
+                scannerDeviceId = scannerSyncSettings.deviceId,
             ),
         )
     }

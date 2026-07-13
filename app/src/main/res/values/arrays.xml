@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="sync_provisioning_allowed_host_suffixes">
+        <item>mixport.co.nz</item>
+    </string-array>
+</resources>

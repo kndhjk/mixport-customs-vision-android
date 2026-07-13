@@ -2,6 +2,10 @@
 .tmp-tools/
 .idea/
 local.properties
+scanner-sync.local.properties
+release-signing.local.properties
+*.keystore
+*.jks
 build/
 captures/
 app/build/
@@ -21,3 +25,5 @@ scanner-*.txt
 startup-logcat*.txt
 stock-scanassist-check.txt
 tmp_scanassist/
+demo-assets/
+demo-recording.json

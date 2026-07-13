@@ -21,13 +21,10 @@ import nz.co.mixport.customsvision.data.BarcodeLookupResult
 import nz.co.mixport.customsvision.data.CargoSummaryRecord
 import nz.co.mixport.customsvision.data.EventLogRecord
 import nz.co.mixport.customsvision.data.InspectionSessionRecord
-import nz.co.mixport.customsvision.data.isUsableScannerBarcode
-import nz.co.mixport.customsvision.data.normalizeScannerBarcode
 import nz.co.mixport.customsvision.data.PalletDetail
 import nz.co.mixport.customsvision.data.PilotRepository
 import nz.co.mixport.customsvision.data.ScannerMatchStatus
 import nz.co.mixport.customsvision.data.ScannerRecord
-import nz.co.mixport.customsvision.data.ScannerSyncSettings
 import nz.co.mixport.customsvision.data.SessionDraft
 import nz.co.mixport.customsvision.domain.PalletWorkflowReducer
 import nz.co.mixport.customsvision.domain.SessionPhase
@@ -43,9 +40,9 @@ enum class AppDestination {
 }
 
 data class ScannerSyncUiState(
-    val apiBaseUrl: String = "",
-    val bearerToken: String = "",
+    val isProvisioned: Boolean = false,
     val deviceId: String = "",
+    val networkAvailable: Boolean? = null,
     val referenceCount: Int = 0,
     val pendingUploadCount: Int = 0,
     val lastReferenceSyncAt: Long? = null,
@@ -56,7 +53,7 @@ data class ScannerSyncUiState(
     val statusMessage: String? = null,
 ) {
     val isConfigured: Boolean
-        get() = apiBaseUrl.isNotBlank() && bearerToken.isNotBlank() && deviceId.isNotBlank()
+        get() = isProvisioned && deviceId.isNotBlank()
 }
 
 data class ScannerUiState(
@@ -133,16 +130,12 @@ class AppViewModel(
                 lastResult = initialScannerRecord?.matchStatus ?: ScannerMatchStatus.WAITING,
                 statusMessage = initialScannerRecord?.let { record ->
                     scannerMessageFor(record, startupSnapshot.appLanguage)
-                } ?: startupSnapshot.appLanguage.pick(
-                    "Waiting for barcode input.",
-                    "等待扫描序列号。",
-                ),
+                } ?: waitingScannerMessage(startupSnapshot.appLanguage),
                 history = startupSnapshot.scannerHistory,
                 lastProcessedBarcode = initialScannerRecord?.scannedBarcode,
                 sync = ScannerSyncUiState(
-                    apiBaseUrl = startupSnapshot.scannerSyncSettings.apiBaseUrl,
-                    bearerToken = startupSnapshot.scannerSyncSettings.bearerToken,
-                    deviceId = startupSnapshot.scannerSyncSettings.deviceId,
+                    isProvisioned = startupSnapshot.scannerSyncProvisioned,
+                    deviceId = startupSnapshot.scannerDeviceId,
                     lastReferenceSyncAt = preferencesRepository.getScannerLastReferenceSyncAt(),
                     lastUploadAt = preferencesRepository.getScannerLastUploadAt(),
                     lastUploadBatchId = preferencesRepository.getScannerLastUploadBatchId(),
@@ -152,16 +145,24 @@ class AppViewModel(
     )
     val uiState: StateFlow<LiveInspectionUiState> = _uiState.asStateFlow()
     private val trackCountEngine = LiveTrackCountEngine(loadedInspectionTuning.profile)
+    private val scannerWorkflowController = ScannerWorkflowController(
+        repository = repository,
+        preferencesRepository = preferencesRepository,
+        state = _uiState,
+        scope = viewModelScope,
+        activeOperatorName = ::activeOperatorName,
+    )
 
     init {
         refreshHistory()
-        refreshScannerSyncStatus()
+        scannerWorkflowController.refreshScannerSyncStatus()
     }
 
     fun selectDestination(destination: AppDestination) {
         _uiState.update { it.copy(selectedDestination = destination) }
         if (destination == AppDestination.SCANNER) {
-            autoRefreshScannerReferences()
+            scannerWorkflowController.refreshScannerConnectionState()
+            scannerWorkflowController.autoRefreshScannerReferences()
         }
     }
 
@@ -184,10 +185,7 @@ class AppViewModel(
                 language = nextLanguage,
             )
 
-            currentState.scanner.lastResult == ScannerMatchStatus.WAITING -> nextLanguage.pick(
-                "Waiting for barcode input.",
-                "等待扫描序列号。",
-            )
+            currentState.scanner.lastResult == ScannerMatchStatus.WAITING -> waitingScannerMessage(nextLanguage)
 
             else -> null
         }
@@ -278,345 +276,38 @@ class AppViewModel(
     }
 
     fun clearScannerHistory() {
-        preferencesRepository.setScannerHistory(emptyList())
-        _uiState.update {
-            it.copy(
-                scanner = it.scanner.copy(
-                    history = emptyList(),
-                    lastResult = ScannerMatchStatus.WAITING,
-                    statusMessage = null,
-                    lastProcessedBarcode = null,
-                    lastLookupResult = null,
-                ),
-            )
-        }
+        scannerWorkflowController.clearScannerHistory()
     }
 
     fun prepareScannerForNextScan() {
-        _uiState.update {
-            it.copy(
-                scanner = it.scanner.copy(
-                    barcodeInput = "",
-                    lastResult = ScannerMatchStatus.WAITING,
-                    statusMessage = it.appLanguage.pick(
-                        "Waiting for barcode input.",
-                        "等待扫描序列号。",
-                    ),
-                    lastProcessedBarcode = null,
-                    lastLookupResult = null,
-                ),
-            )
-        }
-    }
-
-    fun updateScannerApiBaseUrl(value: String) {
-        preferencesRepository.setScannerApiBaseUrl(value)
-        _uiState.update {
-            it.copy(
-                scanner = it.scanner.copy(
-                    sync = it.scanner.sync.copy(apiBaseUrl = value.trim()),
-                ),
-            )
-        }
-    }
-
-    fun updateScannerBearerToken(value: String) {
-        preferencesRepository.setScannerApiBearerToken(value)
-        _uiState.update {
-            it.copy(
-                scanner = it.scanner.copy(
-                    sync = it.scanner.sync.copy(bearerToken = value.trim()),
-                ),
-            )
-        }
-    }
-
-    fun updateScannerDeviceId(value: String) {
-        preferencesRepository.setScannerDeviceId(value)
-        _uiState.update {
-            it.copy(
-                scanner = it.scanner.copy(
-                    sync = it.scanner.sync.copy(deviceId = value.trim()),
-                ),
-            )
-        }
+        scannerWorkflowController.prepareScannerForNextScan()
     }
 
     fun refreshScannerReferences(manual: Boolean = true) {
-        val language = currentLanguage()
-        val settings = currentScannerSyncSettings()
-        if (!settings.isValid()) {
-            _uiState.update {
-                it.copy(
-                    scanner = it.scanner.copy(
-                        sync = it.scanner.sync.copy(
-                            statusMessage = language.pick(
-                                "Set the API address, token, and device ID before syncing.",
-                                "请先填写 API 地址、令牌和设备 ID，再同步。",
-                            ),
-                        ),
-                    ),
-                )
-            }
-            return
-        }
-        if (_uiState.value.scanner.sync.isRefreshing) {
-            return
-        }
-        _uiState.update {
-            it.copy(
-                scanner = it.scanner.copy(
-                    sync = it.scanner.sync.copy(
-                        isRefreshing = true,
-                        statusMessage = language.pick(
-                            if (manual) "Downloading the latest HBL cache..." else "Refreshing live scanner cache...",
-                            if (manual) "正在下载最新 HBL 缓存..." else "正在刷新在线扫码缓存...",
-                        ),
-                    ),
-                ),
-            )
-        }
-        viewModelScope.launch {
-            runCatching {
-                repository.refreshScannerReferences(
-                    settings = settings,
-                    lastUploadAt = preferencesRepository.getScannerLastUploadAt(),
-                    lastUploadBatchId = preferencesRepository.getScannerLastUploadBatchId(),
-                    lastReferenceCursor = preferencesRepository.getScannerLastReferenceCursor(),
-                )
-            }.onSuccess { result ->
-                preferencesRepository.setScannerLastReferenceSyncAt(result.status.lastReferenceSyncAt)
-                preferencesRepository.setScannerLastReferenceCursor(result.cursor)
-                applyScannerSyncStatus(
-                    status = result.status,
-                    statusMessage = currentLanguage().pick(
-                        "Scanner cache updated. ${result.status.referenceCount} scan records are ready offline.",
-                        "扫码缓存已更新，可离线使用 ${result.status.referenceCount} 条记录。",
-                    ),
-                    isRefreshing = false,
-                )
-            }.onFailure { throwable ->
-                _uiState.update {
-                    it.copy(
-                        scanner = it.scanner.copy(
-                            sync = it.scanner.sync.copy(
-                                isRefreshing = false,
-                                statusMessage = throwable.message ?: currentLanguage().pick(
-                                    "Unable to refresh scanner cache.",
-                                    "无法刷新扫码缓存。",
-                                ),
-                            ),
-                        ),
-                    )
-                }
-            }
-        }
+        scannerWorkflowController.refreshScannerReferences(manual)
     }
 
     fun uploadPendingScannerScans() {
-        val language = currentLanguage()
-        val settings = currentScannerSyncSettings()
-        if (_uiState.value.scanner.sync.pendingUploadCount <= 0) {
-            _uiState.update {
-                it.copy(
-                    scanner = it.scanner.copy(
-                        sync = it.scanner.sync.copy(
-                            statusMessage = language.pick(
-                                "There are no pending scanner results to upload.",
-                                "当前没有待上传的扫码结果。",
-                            ),
-                        ),
-                    ),
-                )
-            }
-            return
-        }
-        if (!settings.isValid()) {
-            _uiState.update {
-                it.copy(
-                    scanner = it.scanner.copy(
-                        sync = it.scanner.sync.copy(
-                            statusMessage = language.pick(
-                                "Set the API address, token, and device ID before uploading.",
-                                "请先填写 API 地址、令牌和设备 ID，再上传。",
-                            ),
-                        ),
-                    ),
-                )
-            }
-            return
-        }
-        if (_uiState.value.scanner.sync.isUploading) {
-            return
-        }
-        _uiState.update {
-            it.copy(
-                scanner = it.scanner.copy(
-                    sync = it.scanner.sync.copy(
-                        isUploading = true,
-                        statusMessage = language.pick(
-                            "Uploading pending scanner results to Mixport...",
-                            "正在把待上传扫码结果提交到 Mixport...",
-                        ),
-                    ),
-                ),
-            )
-        }
-        viewModelScope.launch {
-            runCatching {
-                repository.uploadPendingScannerScans(
-                    settings = settings,
-                    operatorName = activeOperatorName(),
-                    workflowMode = _uiState.value.scanner.workflowMode.name,
-                    lastReferenceSyncAt = preferencesRepository.getScannerLastReferenceSyncAt(),
-                )
-            }.onSuccess { status ->
-                preferencesRepository.setScannerLastUploadAt(status.lastUploadAt)
-                preferencesRepository.setScannerLastUploadBatchId(status.lastUploadBatchId)
-                applyScannerSyncStatus(
-                    status = status,
-                    statusMessage = currentLanguage().pick(
-                        "Scanner results uploaded. Batch #${status.lastUploadBatchId ?: 0} is now on the server.",
-                        "扫码结果已上传，批次 #${status.lastUploadBatchId ?: 0} 已写入服务器。",
-                    ),
-                    isUploading = false,
-                )
-            }.onFailure { throwable ->
-                _uiState.update {
-                    it.copy(
-                        scanner = it.scanner.copy(
-                            sync = it.scanner.sync.copy(
-                                isUploading = false,
-                                statusMessage = throwable.message ?: currentLanguage().pick(
-                                    "Unable to upload scanner results.",
-                                    "无法上传扫码结果。",
-                                ),
-                            ),
-                        ),
-                    )
-                }
-            }
-        }
+        scannerWorkflowController.uploadPendingScannerScans()
+    }
+
+    fun refreshScannerConnectionState() {
+        scannerWorkflowController.refreshScannerConnectionState()
+    }
+
+    fun maybeAutoUploadPendingScannerScans() {
+        scannerWorkflowController.maybeAutoUploadPendingScannerScans()
     }
 
     fun verifyScannerBarcode(barcode: String = _uiState.value.scanner.barcodeInput) {
-        val normalized = normalizeScannerBarcode(barcode)
-        if (normalized.isBlank()) {
-            _uiState.update {
-                it.copy(
-                    scanner = it.scanner.copy(
-                        lastResult = ScannerMatchStatus.ERROR,
-                        statusMessage = it.appLanguage.pick(
-                            "Please scan or enter a barcode first.",
-                            "\u8bf7\u5148\u626b\u63cf\u6216\u8f93\u5165\u5e8f\u5217\u53f7\u3002",
-                        ),
-                        lastLookupResult = null,
-                        feedbackNonce = it.scanner.feedbackNonce + 1,
-                    ),
-                )
-            }
-            return
-        }
-        if (_uiState.value.scanner.isProcessing) {
-            return
-        }
-
-        _uiState.update {
-            it.copy(
-                scanner = it.scanner.copy(
-                    isProcessing = true,
-                    statusMessage = it.appLanguage.pick(
-                        "Verifying barcode...",
-                        "\u6b63\u5728\u6bd4\u5bf9\u5e8f\u5217\u53f7...",
-                    ),
-                ),
-            )
-        }
-
-        viewModelScope.launch {
-            val verifiedAt = System.currentTimeMillis()
-            val lookupAttempt = runCatching { lookupBarcode(normalized) }
-            val lookupResult = lookupAttempt.getOrNull()
-            val record = lookupAttempt.fold(
-                onSuccess = {
-                    buildScannerRecord(
-                        barcode = normalized,
-                        lookupResult = it,
-                        scannedAt = verifiedAt,
-                    )
-                },
-                onFailure = { throwable ->
-                    ScannerRecord(
-                        scannedBarcode = normalized,
-                        databaseRecord = localizedErrorRecord(),
-                        matchStatus = ScannerMatchStatus.ERROR,
-                        status = throwable.message?.takeIf(String::isNotBlank) ?: SCANNER_STATUS_ERROR,
-                        source = SCANNER_SOURCE_LOCAL,
-                        scannedAt = verifiedAt,
-                    )
-                },
-            )
-            repository.recordScannerScan(record, lookupResult)
-
-            val updatedHistory = listOf(record) + _uiState.value.scanner.history
-                .filterNot { it.scannedBarcode == record.scannedBarcode && it.scannedAt == record.scannedAt }
-                .take(59)
-            preferencesRepository.setScannerHistory(updatedHistory)
-            val syncStatus = repository.getScannerSyncStatus(
-                lastReferenceSyncAt = preferencesRepository.getScannerLastReferenceSyncAt(),
-                lastUploadAt = preferencesRepository.getScannerLastUploadAt(),
-                lastUploadBatchId = preferencesRepository.getScannerLastUploadBatchId(),
-            )
-
-            _uiState.update {
-                it.copy(
-                    scanner = it.scanner.copy(
-                        barcodeInput = "",
-                        isProcessing = false,
-                        lastResult = record.matchStatus,
-                        statusMessage = scannerMessageFor(record),
-                        history = updatedHistory,
-                        lastProcessedBarcode = record.scannedBarcode,
-                        lastLookupResult = lookupResult,
-                        feedbackNonce = it.scanner.feedbackNonce + 1,
-                        sync = it.scanner.sync.copy(
-                            referenceCount = syncStatus.referenceCount,
-                            pendingUploadCount = syncStatus.pendingUploadCount,
-                            lastReferenceSyncAt = syncStatus.lastReferenceSyncAt,
-                            lastUploadAt = syncStatus.lastUploadAt,
-                            lastUploadBatchId = syncStatus.lastUploadBatchId,
-                        ),
-                    ),
-                )
-            }
-        }
+        scannerWorkflowController.verifyScannerBarcode(barcode)
     }
 
     fun onScannerPdaDetected(
         barcode: String,
         codeType: String,
     ) {
-        val normalized = normalizeScannerBarcode(barcode)
-        if (normalized.isBlank() || _uiState.value.scanner.isProcessing) {
-            return
-        }
-
-        _uiState.update {
-            val typeSuffix = codeType
-                .trim()
-                .takeIf(String::isNotBlank)
-                ?.let { type -> " ($type)" }
-                .orEmpty()
-            it.copy(
-                scanner = it.scanner.copy(
-                    statusMessage = it.appLanguage.pick(
-                        "PDA scanner detected ${normalized}${typeSuffix}. Verifying...",
-                        "PDA \u5df2\u8bfb\u5230 ${normalized}${typeSuffix}\uff0c\u6b63\u5728\u6bd4\u5bf9\u6570\u636e\u5e93...",
-                    ),
-                ),
-            )
-        }
-        verifyScannerBarcode(normalized)
+        scannerWorkflowController.onScannerPdaDetected(barcode, codeType)
     }
 
     fun onFrameHeartbeat(heartbeatAt: Long) {
@@ -644,7 +335,7 @@ class AppViewModel(
                 isUniversalRecognitionRunning = true,
                 infoMessage = it.appLanguage.pick(
                     "Analyzing visible cargo with OCR, color, and target labels...",
-                    "ÃƒÂ¦Ã‚Â­Ã‚Â£ÃƒÂ¥Ã…â€œÃ‚Â¨ÃƒÂ§Ã‚Â»Ã¢â‚¬Å“ÃƒÂ¥Ã‚ÂÃ‹â€  OCRÃƒÂ£Ã¢â€šÂ¬Ã‚ÂÃƒÂ©Ã‚Â¢Ã…â€œÃƒÂ¨Ã¢â‚¬Â°Ã‚Â²ÃƒÂ¥Ã¢â‚¬â„¢Ã…â€™ÃƒÂ§Ã¢â‚¬ÂºÃ‚Â®ÃƒÂ¦Ã‚Â Ã¢â‚¬Â¡ÃƒÂ§Ã‚Â±Ã‚Â»ÃƒÂ¥Ã‹â€ Ã‚Â«ÃƒÂ¨Ã‚Â¯Ã¢â‚¬Â ÃƒÂ¥Ã‹â€ Ã‚Â«ÃƒÂ¥Ã‚ÂÃ‚Â¯ÃƒÂ¨Ã‚Â§Ã‚ÂÃƒÂ¨Ã‚Â´Ã‚Â§ÃƒÂ§Ã¢â‚¬Â°Ã‚Â©...",
+                    "正在结合 OCR、颜色和目标标签分析可见货物...",
                 ),
                 errorMessage = null,
             )
@@ -660,12 +351,12 @@ class AppViewModel(
                 infoMessage = if (decoratedSnapshot.items.isEmpty()) {
                     it.appLanguage.pick(
                         "No recognizable cargo was found in the current view.",
-                        "ÃƒÂ¥Ã‚Â½Ã¢â‚¬Å“ÃƒÂ¥Ã¢â‚¬Â°Ã‚ÂÃƒÂ§Ã¢â‚¬ÂÃ‚Â»ÃƒÂ©Ã‚ÂÃ‚Â¢ÃƒÂ©Ã¢â‚¬Â¡Ã…â€™ÃƒÂ¦Ã‚Â²Ã‚Â¡ÃƒÂ¦Ã…â€œÃ¢â‚¬Â°ÃƒÂ¨Ã‚Â¯Ã¢â‚¬Â ÃƒÂ¥Ã‹â€ Ã‚Â«ÃƒÂ¥Ã¢â‚¬Â¡Ã‚ÂºÃƒÂ¦Ã‹Å“Ã…Â½ÃƒÂ§Ã‚Â¡Ã‚Â®ÃƒÂ¨Ã‚Â´Ã‚Â§ÃƒÂ§Ã¢â‚¬Â°Ã‚Â©ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
+                        "当前画面中没有识别到可确认的货物。",
                     )
                 } else {
                     it.appLanguage.pick(
                         "Analyzed ${decoratedSnapshot.items.size} visible cargo item(s).",
-                        "ÃƒÂ¥Ã‚Â·Ã‚Â²ÃƒÂ¥Ã‹â€ Ã¢â‚¬Â ÃƒÂ¦Ã…Â¾Ã‚Â ${snapshot.items.size} ÃƒÂ¤Ã‚Â¸Ã‚ÂªÃƒÂ¥Ã‚ÂÃ‚Â¯ÃƒÂ¨Ã‚Â§Ã‚ÂÃƒÂ¨Ã‚Â´Ã‚Â§ÃƒÂ§Ã¢â‚¬Â°Ã‚Â©ÃƒÂ¥Ã‚Â¯Ã‚Â¹ÃƒÂ¨Ã‚Â±Ã‚Â¡ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
+                        "已分析 ${decoratedSnapshot.items.size} 个可见货物对象。",
                     )
                 },
                 errorMessage = null,
@@ -719,7 +410,7 @@ class AppViewModel(
                 it.copy(
                     errorMessage = it.appLanguage.pick(
                         "Container code and operator are required before the session can start.",
-                        "ÃƒÂ¥Ã‚Â¼Ã¢â€šÂ¬ÃƒÂ¥Ã‚Â§Ã¢â‚¬Â¹ÃƒÂ¤Ã‚Â½Ã…â€œÃƒÂ¤Ã‚Â¸Ã…Â¡ÃƒÂ¥Ã¢â‚¬Â°Ã‚ÂÃƒÂ¥Ã‚Â¿Ã¢â‚¬Â¦ÃƒÂ©Ã‚Â¡Ã‚Â»ÃƒÂ¥Ã‚Â¡Ã‚Â«ÃƒÂ¥Ã¢â‚¬Â Ã¢â€žÂ¢ÃƒÂ¦Ã…Â¸Ã…â€œÃƒÂ¥Ã‚ÂÃ‚Â·ÃƒÂ¥Ã¢â‚¬â„¢Ã…â€™ÃƒÂ¦Ã¢â‚¬Å“Ã‚ÂÃƒÂ¤Ã‚Â½Ã…â€œÃƒÂ¥Ã¢â‚¬ËœÃ‹Å“ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
+                        "开始作业前必须先填写柜号和操作员。",
                     ),
                 )
             }
@@ -734,7 +425,7 @@ class AppViewModel(
                 currentPalletId = null,
                 infoMessage = currentLanguage().pick(
                     "Session ${session.containerCode} started.",
-                    "ÃƒÂ¤Ã‚Â½Ã…â€œÃƒÂ¤Ã‚Â¸Ã…Â¡ ${session.containerCode} ÃƒÂ¥Ã‚Â·Ã‚Â²ÃƒÂ¥Ã‚Â¼Ã¢â€šÂ¬ÃƒÂ¥Ã‚Â§Ã¢â‚¬Â¹ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
+                    "作业 ${session.containerCode} 已开始。",
                 ),
             )
             _uiState.update {
@@ -767,7 +458,7 @@ class AppViewModel(
                     isUniversalRecognitionRunning = false,
                     universalRecognitionSnapshot = null,
                     isRecording = false,
-                    infoMessage = it.appLanguage.pick("Session closed.", "ÃƒÂ¤Ã‚Â½Ã…â€œÃƒÂ¤Ã‚Â¸Ã…Â¡ÃƒÂ¥Ã‚Â·Ã‚Â²ÃƒÂ¥Ã¢â‚¬Â¦Ã‚Â³ÃƒÂ©Ã¢â‚¬â€Ã‚Â­ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡"),
+                    infoMessage = it.appLanguage.pick("Session closed.", "作业已关闭。"),
                     errorMessage = null,
                 )
             }
@@ -787,7 +478,7 @@ class AppViewModel(
                 it.copy(
                     errorMessage = it.appLanguage.pick(
                         "Start a session before counting tracked objects.",
-                        "ÃƒÂ¥Ã‚Â¼Ã¢â€šÂ¬ÃƒÂ¥Ã‚Â§Ã¢â‚¬Â¹ÃƒÂ¤Ã‚Â½Ã…â€œÃƒÂ¤Ã‚Â¸Ã…Â¡ÃƒÂ¥Ã‚ÂÃ…Â½ÃƒÂ¦Ã¢â‚¬Â°Ã‚ÂÃƒÂ¨Ã†â€™Ã‚Â½ÃƒÂ§Ã‚Â»Ã…Â¸ÃƒÂ¨Ã‚Â®Ã‚Â¡ÃƒÂ¨Ã‚Â·Ã…Â¸ÃƒÂ¨Ã‚Â¸Ã‚ÂªÃƒÂ¥Ã‹â€ Ã‚Â°ÃƒÂ§Ã…Â¡Ã¢â‚¬Å¾ÃƒÂ¨Ã‚Â´Ã‚Â§ÃƒÂ§Ã¢â‚¬Â°Ã‚Â©ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
+                        "请先开始作业，再统计跟踪到的货物。",
                     ),
                 )
             }
@@ -812,7 +503,7 @@ class AppViewModel(
                         it.copy(
                             errorMessage = it.appLanguage.pick(
                                 "No pallet candidate is visible yet. Aim the camera at the pallet first.",
-                                "ÃƒÂ¥Ã‚Â½Ã¢â‚¬Å“ÃƒÂ¥Ã¢â‚¬Â°Ã‚ÂÃƒÂ¨Ã‚Â¿Ã‹Å“ÃƒÂ¦Ã‚Â²Ã‚Â¡ÃƒÂ¦Ã…â€œÃ¢â‚¬Â°ÃƒÂ§Ã…â€œÃ¢â‚¬Â¹ÃƒÂ¥Ã‹â€ Ã‚Â°ÃƒÂ¦Ã¢â‚¬Â°Ã‹Å“ÃƒÂ§Ã¢â‚¬ÂºÃ‹Å“ÃƒÂ¥Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÂ©Ã¢â€šÂ¬Ã¢â‚¬Â°ÃƒÂ¯Ã‚Â¼Ã…â€™ÃƒÂ¨Ã‚Â¯Ã‚Â·ÃƒÂ¥Ã¢â‚¬Â¦Ã‹â€ ÃƒÂ¦Ã…Â Ã…Â ÃƒÂ©Ã¢â‚¬Â¢Ã…â€œÃƒÂ¥Ã‚Â¤Ã‚Â´ÃƒÂ¥Ã‚Â¯Ã‚Â¹ÃƒÂ¥Ã¢â‚¬Â¡Ã¢â‚¬Â ÃƒÂ¦Ã¢â‚¬Â°Ã‹Å“ÃƒÂ§Ã¢â‚¬ÂºÃ‹Å“ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
+                                "当前还没有看到托盘候选，请先将镜头对准托盘。",
                             ),
                         )
                     }
@@ -868,7 +559,7 @@ class AppViewModel(
                     it.copy(
                         infoMessage = it.appLanguage.pick(
                             "No new tracked cargo is ready to count.",
-                            "ÃƒÂ¥Ã‚Â½Ã¢â‚¬Å“ÃƒÂ¥Ã¢â‚¬Â°Ã‚ÂÃƒÂ¦Ã‚Â²Ã‚Â¡ÃƒÂ¦Ã…â€œÃ¢â‚¬Â°ÃƒÂ¦Ã¢â‚¬â€œÃ‚Â°ÃƒÂ§Ã…Â¡Ã¢â‚¬Å¾ÃƒÂ¥Ã‚ÂÃ‚Â¯ÃƒÂ§Ã‚Â»Ã…Â¸ÃƒÂ¨Ã‚Â®Ã‚Â¡ÃƒÂ¨Ã‚Â´Ã‚Â§ÃƒÂ§Ã¢â‚¬Â°Ã‚Â©ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
+                            "当前没有新的跟踪货物可计数。",
                         ),
                         errorMessage = null,
                     )
@@ -878,7 +569,7 @@ class AppViewModel(
                         it.copy(
                             infoMessage = it.appLanguage.pick(
                                 "$stabilizingCount tracked object(s) are still stabilizing. Hold the camera steady for another moment.",
-                                "ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¿Ãƒâ€¹Ã…â€œÃƒÆ’Ã‚Â¦Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â° $stabilizingCount ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂªÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â·Ãƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂªÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¯Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â±Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã‚Â¥Ãƒâ€¦Ã¢â‚¬Å“Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â¨Ãƒâ€šÃ‚Â³ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â®Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¼Ãƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¨Ãƒâ€šÃ‚Â¯Ãƒâ€šÃ‚Â·ÃƒÆ’Ã‚Â¥ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â¨Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â¾Ãƒâ€šÃ‚Â®ÃƒÆ’Ã‚Â¤Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¦Ãƒâ€¦Ã¢â‚¬â„¢Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â§ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚Â©Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â¨Ãƒâ€šÃ‚Â³ÃƒÆ’Ã‚Â¥Ãƒâ€šÃ‚Â®Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚Â£ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡",
+                                "$stabilizingCount 个跟踪对象仍在稳定中，请再稳住镜头片刻。",
                             ),
                             errorMessage = null,
                         )
@@ -888,7 +579,7 @@ class AppViewModel(
                         it.copy(
                             infoMessage = it.appLanguage.pick(
                                 "$awaitingPlacementCount tracked object(s) are visible but not yet sitting on the pallet zone.",
-                                "$awaitingPlacementCount ÃƒÂ¤Ã‚Â¸Ã‚ÂªÃƒÂ¨Ã‚Â·Ã…Â¸ÃƒÂ¨Ã‚Â¸Ã‚ÂªÃƒÂ¥Ã‚Â¯Ã‚Â¹ÃƒÂ¨Ã‚Â±Ã‚Â¡ÃƒÂ¥Ã‚Â·Ã‚Â²ÃƒÂ¥Ã¢â‚¬Â¡Ã‚ÂºÃƒÂ§Ã…Â½Ã‚Â°ÃƒÂ¯Ã‚Â¼Ã…â€™ÃƒÂ¤Ã‚Â½Ã¢â‚¬Â ÃƒÂ¨Ã‚Â¿Ã‹Å“ÃƒÂ¦Ã‚Â²Ã‚Â¡ÃƒÂ¦Ã…â€œÃ¢â‚¬Â°ÃƒÂ¨Ã‚Â¿Ã¢â‚¬ÂºÃƒÂ¥Ã¢â‚¬Â¦Ã‚Â¥ÃƒÂ¦Ã¢â‚¬Â°Ã‹Å“ÃƒÂ§Ã¢â‚¬ÂºÃ‹Å“ÃƒÂ¨Ã‚Â£Ã¢â‚¬Â¦ÃƒÂ¨Ã‚Â´Ã‚Â§ÃƒÂ¥Ã…â€™Ã‚ÂºÃƒÂ¥Ã…Â¸Ã…Â¸ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
+                                "$awaitingPlacementCount 个跟踪对象已出现，但还没有放到托盘区域内。",
                             ),
                             errorMessage = null,
                         )
@@ -898,7 +589,7 @@ class AppViewModel(
                         it.copy(
                             infoMessage = it.appLanguage.pick(
                                 "$awaitingAnalysisCount stable object(s) need richer OCR or label evidence before counting.",
-                                "$awaitingAnalysisCount ÃƒÂ¤Ã‚Â¸Ã‚ÂªÃƒÂ§Ã‚Â¨Ã‚Â³ÃƒÂ¥Ã‚Â®Ã…Â¡ÃƒÂ¥Ã‚Â¯Ã‚Â¹ÃƒÂ¨Ã‚Â±Ã‚Â¡ÃƒÂ¨Ã‚Â¿Ã‹Å“ÃƒÂ©Ã…â€œÃ¢â€šÂ¬ÃƒÂ¨Ã‚Â¦Ã‚ÂÃƒÂ¦Ã¢â‚¬ÂºÃ‚Â´ÃƒÂ¥Ã‚Â¤Ã…Â¡ OCR ÃƒÂ¦Ã‹â€ Ã¢â‚¬â€œÃƒÂ¦Ã‚Â Ã¢â‚¬Â¡ÃƒÂ§Ã‚Â­Ã‚Â¾ÃƒÂ¨Ã‚Â¯Ã‚ÂÃƒÂ¦Ã‚ÂÃ‚Â®ÃƒÂ¥Ã‚ÂÃ…Â½ÃƒÂ¦Ã¢â‚¬Â°Ã‚ÂÃƒÂ¤Ã‚Â¼Ã…Â¡ÃƒÂ¨Ã‚Â®Ã‚Â¡ÃƒÂ¦Ã¢â‚¬Â¢Ã‚Â°ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
+                                "$awaitingAnalysisCount 个稳定对象在计数前还需要更充分的 OCR 或标签证据。",
                             ),
                             errorMessage = null,
                         )
@@ -939,7 +630,7 @@ class AppViewModel(
                     universalRecognitionSnapshot = decorateRecognitionSnapshot(it.universalRecognitionSnapshot),
                     infoMessage = it.appLanguage.pick(
                         "${countableDetections.size} tracked object(s) counted from the live view.",
-                        "ÃƒÂ¥Ã‚Â·Ã‚Â²ÃƒÂ¤Ã‚Â»Ã…Â½ÃƒÂ¥Ã‚Â®Ã…Â¾ÃƒÂ¦Ã¢â‚¬â€Ã‚Â¶ÃƒÂ§Ã¢â‚¬ÂÃ‚Â»ÃƒÂ©Ã‚ÂÃ‚Â¢ÃƒÂ§Ã‚Â»Ã…Â¸ÃƒÂ¨Ã‚Â®Ã‚Â¡ ${countableDetections.size} ÃƒÂ¤Ã‚Â¸Ã‚ÂªÃƒÂ¨Ã‚Â·Ã…Â¸ÃƒÂ¨Ã‚Â¸Ã‚ÂªÃƒÂ¥Ã‚Â¯Ã‚Â¹ÃƒÂ¨Ã‚Â±Ã‚Â¡ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
+                        "已从实时画面计数 ${countableDetections.size} 个跟踪对象。",
                     ),
                     errorMessage = null,
                 )
@@ -960,7 +651,7 @@ class AppViewModel(
                 it.copy(
                     errorMessage = it.appLanguage.pick(
                         "Start a session before processing detections.",
-                        "ÃƒÂ¨Ã‚Â¯Ã‚Â·ÃƒÂ¥Ã¢â‚¬Â¦Ã‹â€ ÃƒÂ¥Ã‚Â¼Ã¢â€šÂ¬ÃƒÂ¥Ã‚Â§Ã¢â‚¬Â¹ÃƒÂ¤Ã‚Â½Ã…â€œÃƒÂ¤Ã‚Â¸Ã…Â¡ÃƒÂ¯Ã‚Â¼Ã…â€™ÃƒÂ¥Ã¢â‚¬Â Ã‚ÂÃƒÂ¥Ã‚Â¤Ã¢â‚¬Å¾ÃƒÂ§Ã‚ÂÃ¢â‚¬Â ÃƒÂ¨Ã‚Â¯Ã¢â‚¬Â ÃƒÂ¥Ã‹â€ Ã‚Â«ÃƒÂ§Ã‚Â»Ã¢â‚¬Å“ÃƒÂ¦Ã…Â¾Ã…â€œÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
+                        "请先开始作业，再处理识别结果。",
                     ),
                 )
             }
@@ -999,7 +690,7 @@ class AppViewModel(
                     )
                     infoMessage = currentLanguage().pick(
                         "${action.itemLabel} counted.",
-                        "${action.itemLabel} ÃƒÂ¥Ã‚Â·Ã‚Â²ÃƒÂ¨Ã‚Â®Ã‚Â¡ÃƒÂ¦Ã¢â‚¬Â¢Ã‚Â°ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
+                        "${action.itemLabel} 已计数。",
                     )
                 }
 
@@ -1027,7 +718,7 @@ class AppViewModel(
                         trackCountEngine.resetForNextPallet()
                         infoMessage = currentLanguage().pick(
                             "Pallet #${action.sequenceNumber} archived.",
-                            "ÃƒÂ¦Ã¢â‚¬Â°Ã‹Å“ÃƒÂ§Ã¢â‚¬ÂºÃ‹Å“ #${action.sequenceNumber} ÃƒÂ¥Ã‚Â·Ã‚Â²ÃƒÂ¥Ã‚Â½Ã¢â‚¬â„¢ÃƒÂ¦Ã‚Â¡Ã‚Â£ÃƒÂ£Ã¢â€šÂ¬Ã¢â‚¬Å¡",
+                            "托盘 #${action.sequenceNumber} 已归档。",
                         )
                     }
                 }
@@ -1111,181 +802,6 @@ class AppViewModel(
         return snapshot?.let(trackCountEngine::decorateRecognitionSnapshot)
     }
 
-    private suspend fun lookupBarcode(barcode: String): BarcodeLookupResult? {
-        if (!isUsableScannerBarcode(barcode)) {
-            return null
-        }
-        return repository.lookupBarcode(barcode, currentScannerSyncSettings())
-    }
-
-    private fun buildScannerRecord(
-        barcode: String,
-        lookupResult: BarcodeLookupResult?,
-        scannedAt: Long,
-    ): ScannerRecord {
-        return when {
-            !isUsableScannerBarcode(barcode) -> {
-                ScannerRecord(
-                    scannedBarcode = barcode,
-                    databaseRecord = localizedErrorRecord(),
-                    matchStatus = ScannerMatchStatus.ERROR,
-                    status = SCANNER_STATUS_INVALID_FORMAT,
-                    source = SCANNER_SOURCE_LOCAL,
-                    scannedAt = scannedAt,
-                )
-            }
-
-            lookupResult != null && lookupResult.found -> {
-                ScannerRecord(
-                    scannedBarcode = barcode,
-                    databaseRecord = lookupResult.databaseRecord,
-                    matchStatus = ScannerMatchStatus.MATCHED,
-                    status = lookupResult.status,
-                    source = lookupResult.source,
-                    scannedAt = scannedAt,
-                    customersStatus = lookupResult.customersStatus,
-                    mpiStatus = lookupResult.mpiStatus,
-                )
-            }
-
-            else -> {
-                ScannerRecord(
-                    scannedBarcode = barcode,
-                    databaseRecord = SCANNER_RECORD_NOT_FOUND,
-                    matchStatus = ScannerMatchStatus.MISMATCH,
-                    status = SCANNER_STATUS_UNKNOWN,
-                    source = SCANNER_SOURCE_LOCAL,
-                    scannedAt = scannedAt,
-                )
-            }
-        }
-    }
-
-    private fun scannerMessageFor(record: ScannerRecord): String {
-        return scannerMessageFor(record, currentLanguage())
-    }
-
-    private fun scannerMessageFor(
-        record: ScannerRecord,
-        language: AppLanguage,
-    ): String {
-        return when (record.matchStatus) {
-            ScannerMatchStatus.MATCHED -> scannerMatchedMessage(record, language)
-
-            ScannerMatchStatus.MISMATCH -> language.pick(
-                "\"${record.scannedBarcode}\" was not found.",
-                "数据库里没有找到序列号 ${record.scannedBarcode}。",
-            )
-
-            ScannerMatchStatus.ERROR -> language.pick(
-                "\"${record.scannedBarcode}\" could not be verified.",
-                "序列号 ${record.scannedBarcode} 无法完成校验。",
-            )
-
-            ScannerMatchStatus.WAITING -> language.pick(
-                "Waiting for barcode input.",
-                "等待扫描序列号。",
-            )
-        }
-    }
-
-    private fun scannerMatchedMessage(
-        record: ScannerRecord,
-        language: AppLanguage,
-    ): String {
-        val nzcsStatus = localizedStatus(
-            language,
-            canonicalScannerClearanceStatus(record.customersStatus),
-        )
-        val mpiStatus = localizedStatus(
-            language,
-            canonicalScannerClearanceStatus(record.mpiStatus),
-        )
-        return when (overallScannerClearanceStatus(record.customersStatus, record.mpiStatus)) {
-            "CLEAR" -> language.pick(
-                "\"${record.scannedBarcode}\" matched and is clear. NZCS $nzcsStatus | MPI $mpiStatus.",
-                "序列号 ${record.scannedBarcode} 已匹配并已放行。NZCS ${nzcsStatus} | MPI ${mpiStatus}。",
-            )
-
-            "FAILED" -> language.pick(
-                "\"${record.scannedBarcode}\" matched, but clearance failed. NZCS $nzcsStatus | MPI $mpiStatus.",
-                "序列号 ${record.scannedBarcode} 已匹配，但清关未通过。NZCS ${nzcsStatus} | MPI ${mpiStatus}。",
-            )
-
-            else -> language.pick(
-                "\"${record.scannedBarcode}\" matched, but clearance is on hold. NZCS $nzcsStatus | MPI $mpiStatus.",
-                "序列号 ${record.scannedBarcode} 已匹配，但当前仍为待处理。NZCS ${nzcsStatus} | MPI ${mpiStatus}。",
-            )
-        }
-    }
-
-    private fun localizedErrorRecord(): String {
-        return SCANNER_RECORD_ERROR
-    }
-
-    private fun refreshScannerSyncStatus() {
-        viewModelScope.launch {
-            val status = repository.getScannerSyncStatus(
-                lastReferenceSyncAt = preferencesRepository.getScannerLastReferenceSyncAt(),
-                lastUploadAt = preferencesRepository.getScannerLastUploadAt(),
-                lastUploadBatchId = preferencesRepository.getScannerLastUploadBatchId(),
-            )
-            applyScannerSyncStatus(
-                status = status,
-                statusMessage = _uiState.value.scanner.sync.statusMessage,
-            )
-        }
-    }
-
-    private fun applyScannerSyncStatus(
-        status: nz.co.mixport.customsvision.data.ScannerSyncStatus,
-        statusMessage: String?,
-        isRefreshing: Boolean = false,
-        isUploading: Boolean = false,
-    ) {
-        _uiState.update {
-            it.copy(
-                scanner = it.scanner.copy(
-                    sync = it.scanner.sync.copy(
-                        referenceCount = status.referenceCount,
-                        pendingUploadCount = status.pendingUploadCount,
-                        lastReferenceSyncAt = status.lastReferenceSyncAt,
-                        lastUploadAt = status.lastUploadAt,
-                        lastUploadBatchId = status.lastUploadBatchId,
-                        isRefreshing = isRefreshing,
-                        isUploading = isUploading,
-                        statusMessage = statusMessage,
-                    ),
-                ),
-            )
-        }
-    }
-
-    private fun autoRefreshScannerReferences() {
-        val sync = _uiState.value.scanner.sync
-        if (!sync.isConfigured || sync.isRefreshing || sync.isUploading) {
-            return
-        }
-        if (sync.referenceCount <= 0) {
-            refreshScannerReferences(manual = false)
-            return
-        }
-        val lastSyncAt = sync.lastReferenceSyncAt ?: 0L
-        if (System.currentTimeMillis() - lastSyncAt < SCANNER_REFERENCE_REFRESH_INTERVAL_MS) {
-            return
-        }
-        refreshScannerReferences(manual = false)
-    }
-
-    private fun currentScannerSyncSettings(): ScannerSyncSettings {
-        val sync = _uiState.value.scanner.sync
-        return ScannerSyncSettings(
-            apiBaseUrl = sync.apiBaseUrl,
-            bearerToken = sync.bearerToken,
-            deviceId = sync.deviceId,
-        )
-    }
-
     private fun activeOperatorName(): String {
         return _uiState.value.activeSession?.operatorName
             ?.takeIf(String::isNotBlank)
@@ -1314,18 +830,7 @@ class AppViewModel(
 
     private fun currentLanguage(): AppLanguage = _uiState.value.appLanguage
 
-    private fun ScannerSyncSettings.isValid(): Boolean {
-        return apiBaseUrl.isNotBlank() && bearerToken.isNotBlank() && deviceId.isNotBlank()
-    }
-
     companion object {
-        private const val SCANNER_REFERENCE_REFRESH_INTERVAL_MS = 120_000L
-        private const val SCANNER_SOURCE_LOCAL = "LOCAL"
-        private const val SCANNER_RECORD_NOT_FOUND = "NOT_FOUND"
-        private const val SCANNER_RECORD_ERROR = "ERROR"
-        private const val SCANNER_STATUS_UNKNOWN = "UNKNOWN"
-        private const val SCANNER_STATUS_ERROR = "ERROR"
-        private const val SCANNER_STATUS_INVALID_FORMAT = "INVALID_BARCODE_FORMAT"
         private val GENERIC_CARGO_LABELS = setOf(
             "Tracked cargo",
             "Pallet candidate",

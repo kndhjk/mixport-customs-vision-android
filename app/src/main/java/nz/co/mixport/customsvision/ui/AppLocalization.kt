@@ -1,7 +1,6 @@
 package nz.co.mixport.customsvision.ui
 
 import nz.co.mixport.customsvision.data.AppLanguage
-import nz.co.mixport.customsvision.data.NativeScannerBridge
 import nz.co.mixport.customsvision.data.ScannerMatchStatus
 
 fun AppLanguage.pick(english: String, chinese: String): String {
@@ -63,7 +62,7 @@ fun localizedStatus(language: AppLanguage, status: String): String {
         "AVAILABLE" -> language.pick("Available", "可用")
         "UNAVAILABLE" -> language.pick("Unavailable", "不可用")
         "UPLIFTED" -> language.pick("Uplifted", "已提货")
-        "HOLD" -> language.pick("Hold", "暂扣")
+        "HOLD" -> language.pick("Hold", "待处理")
         "FAILED" -> language.pick("Failed", "失败")
         "CLEAR" -> language.pick("Clear", "放行")
         else -> status
@@ -71,7 +70,6 @@ fun localizedStatus(language: AppLanguage, status: String): String {
 }
 
 fun canonicalScannerClearanceStatus(status: String?): String {
-    NativeScannerBridge.canonicalClearanceStatusOrNull(status)?.let { return it }
     return canonicalScannerClearanceStatusFallback(status)
 }
 
@@ -96,7 +94,6 @@ fun overallScannerClearanceStatus(
     nzcsStatus: String?,
     mpiStatus: String?,
 ): String {
-    NativeScannerBridge.overallClearanceStatusOrNull(nzcsStatus, mpiStatus)?.let { return it }
     return overallScannerClearanceStatusFallback(nzcsStatus, mpiStatus)
 }
 

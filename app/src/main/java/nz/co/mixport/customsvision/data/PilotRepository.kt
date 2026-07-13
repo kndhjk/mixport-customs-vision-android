@@ -1,10 +1,15 @@
 package nz.co.mixport.customsvision.data
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.Instant
 
 class PilotRepository(
+    private val appContext: Context,
     private val databaseHelper: CustomsDatabaseHelper,
     private val syncClient: CustomsSyncClient,
 ) {
@@ -89,7 +94,7 @@ class PilotRepository(
     ): BarcodeLookupResult? = withContext(Dispatchers.IO) {
         val normalizedBarcode = normalizeScannerBarcode(barcode)
         val local = databaseHelper.lookupBarcode(normalizedBarcode)
-        if (settings == null || settings.apiBaseUrl.isBlank() || settings.bearerToken.isBlank()) {
+        if (settings == null || !settings.hasPrivateProfile()) {
             return@withContext local
         }
 
@@ -106,7 +111,8 @@ class PilotRepository(
                 replaceExisting = false,
             )
             return@withContext liveLookup
-        } catch (_: Throwable) {
+        } catch (throwable: CustomsSyncException) {
+            Log.w(TAG, "Remote barcode lookup failed. Falling back to local cache.", throwable)
             return@withContext local
         }
     }
@@ -180,9 +186,7 @@ class PilotRepository(
         lastUploadAt: Long?,
         lastUploadBatchId: Long?,
     ): ScannerSyncStatus = withContext(Dispatchers.IO) {
-        ScannerSyncStatus(
-            referenceCount = databaseHelper.getScannerReferenceCount(),
-            pendingUploadCount = databaseHelper.getPendingScannerUploadCount(),
+        buildScannerSyncStatus(
             lastReferenceSyncAt = lastReferenceSyncAt,
             lastUploadAt = lastUploadAt,
             lastUploadBatchId = lastUploadBatchId,
@@ -205,13 +209,92 @@ class PilotRepository(
             batchId = response.batchId,
             uploadedAt = response.uploadedAt,
         )
-        ScannerSyncStatus(
-            referenceCount = databaseHelper.getScannerReferenceCount(),
-            pendingUploadCount = databaseHelper.getPendingScannerUploadCount(),
+        buildScannerSyncStatus(
             lastReferenceSyncAt = lastReferenceSyncAt,
             lastUploadAt = response.uploadedAt,
             lastUploadBatchId = response.batchId,
         )
+    }
+
+    suspend fun autoUploadPendingScannerScansIfOnline(
+        settings: ScannerSyncSettings,
+        operatorName: String,
+        workflowMode: String,
+        lastReferenceSyncAt: Long?,
+        lastUploadAt: Long?,
+        lastUploadBatchId: Long?,
+    ): ScannerAutoUploadResult = withContext(Dispatchers.IO) {
+        if (!settings.isValid()) {
+            return@withContext ScannerAutoUploadResult(
+                status = buildScannerSyncStatus(
+                    lastReferenceSyncAt = lastReferenceSyncAt,
+                    lastUploadAt = lastUploadAt,
+                    lastUploadBatchId = lastUploadBatchId,
+                ),
+                state = ScannerAutoUploadState.CACHED_UNCONFIGURED,
+                networkAvailable = null,
+            )
+        }
+
+        val networkAvailable = isNetworkAvailable()
+        if (!networkAvailable) {
+            return@withContext ScannerAutoUploadResult(
+                status = buildScannerSyncStatus(
+                    lastReferenceSyncAt = lastReferenceSyncAt,
+                    lastUploadAt = lastUploadAt,
+                    lastUploadBatchId = lastUploadBatchId,
+                ),
+                state = ScannerAutoUploadState.CACHED_OFFLINE,
+                networkAvailable = false,
+            )
+        }
+
+        val pending = databaseHelper.listPendingScannerUploads()
+        if (pending.isEmpty()) {
+            return@withContext ScannerAutoUploadResult(
+                status = buildScannerSyncStatus(
+                    lastReferenceSyncAt = lastReferenceSyncAt,
+                    lastUploadAt = lastUploadAt,
+                    lastUploadBatchId = lastUploadBatchId,
+                ),
+                state = ScannerAutoUploadState.UPLOADED,
+                networkAvailable = true,
+            )
+        }
+
+        try {
+            val response = syncClient.uploadScannerRecords(settings, operatorName, workflowMode, pending)
+            databaseHelper.markScannerUploadsSynced(
+                localIds = pending.map { it.id },
+                batchId = response.batchId,
+                uploadedAt = response.uploadedAt,
+            )
+            ScannerAutoUploadResult(
+                status = buildScannerSyncStatus(
+                    lastReferenceSyncAt = lastReferenceSyncAt,
+                    lastUploadAt = response.uploadedAt,
+                    lastUploadBatchId = response.batchId,
+                ),
+                state = ScannerAutoUploadState.UPLOADED,
+                networkAvailable = true,
+            )
+        } catch (throwable: CustomsSyncException) {
+            Log.w(TAG, "Auto-upload failed; keeping scanner records queued locally.", throwable)
+            ScannerAutoUploadResult(
+                status = buildScannerSyncStatus(
+                    lastReferenceSyncAt = lastReferenceSyncAt,
+                    lastUploadAt = lastUploadAt,
+                    lastUploadBatchId = lastUploadBatchId,
+                ),
+                state = ScannerAutoUploadState.CACHED_UPLOAD_FAILED,
+                networkAvailable = true,
+                errorMessage = throwable.message,
+            )
+        }
+    }
+
+    suspend fun isScannerNetworkAvailable(): Boolean = withContext(Dispatchers.IO) {
+        isNetworkAvailable()
     }
 
     suspend fun updateContainerFlag(sessionId: Long, hasRemainingCargo: Boolean) =
@@ -297,7 +380,34 @@ class PilotRepository(
         )
     }
 
+    private fun buildScannerSyncStatus(
+        lastReferenceSyncAt: Long?,
+        lastUploadAt: Long?,
+        lastUploadBatchId: Long?,
+    ): ScannerSyncStatus {
+        return ScannerSyncStatus(
+            referenceCount = databaseHelper.getScannerReferenceCount(),
+            pendingUploadCount = databaseHelper.getPendingScannerUploadCount(),
+            lastReferenceSyncAt = lastReferenceSyncAt,
+            lastUploadAt = lastUploadAt,
+            lastUploadBatchId = lastUploadBatchId,
+        )
+    }
+
+    private fun ScannerSyncSettings.isValid(): Boolean {
+        return isConfigured()
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        val connectivityManager = appContext.getSystemService(ConnectivityManager::class.java) ?: return false
+        val activeNetwork = connectivityManager.activeNetwork ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
     companion object {
+        private const val TAG = "PilotRepository"
         private const val MAX_BOOTSTRAP_PAGES = 8
     }
 }
