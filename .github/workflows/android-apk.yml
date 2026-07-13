@@ -42,8 +42,16 @@ jobs:
             VERSION_NAME="main-${GITHUB_RUN_NUMBER}"
           fi
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk "dist/mixport-customs-vision-${VERSION_NAME}-debug.apk"
-          cp app/build/outputs/apk/release/app-release.apk "dist/mixport-customs-vision-${VERSION_NAME}-release.apk"
+          shopt -s nullglob
+          APKS=(app/build/outputs/apk/debug/*.apk app/build/outputs/apk/release/*.apk)
+          if [[ ${#APKS[@]} -eq 0 ]]; then
+            echo "No APK artifacts were produced."
+            exit 1
+          fi
+          for apk in "${APKS[@]}"; do
+            base_name="$(basename "${apk}")"
+            cp "${apk}" "dist/${base_name%.apk}-${VERSION_NAME}.apk"
+          done
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
