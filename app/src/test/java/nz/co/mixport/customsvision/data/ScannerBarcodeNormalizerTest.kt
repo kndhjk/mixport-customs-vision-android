@@ -17,6 +17,11 @@ class ScannerBarcodeNormalizerTest {
     }
 
     @Test
+    fun normalizeScannerBarcode_stripsNullsAndTabs() {
+        assertEquals("VAN1413050612", normalizeScannerBarcode("\u0000van\t1413050612\u0000"))
+    }
+
+    @Test
     fun isUsableScannerBarcode_acceptsShorterNumericLabels() {
         assertTrue(isUsableScannerBarcode("6970479741787"))
         assertTrue(isUsableScannerBarcode("ABCD"))

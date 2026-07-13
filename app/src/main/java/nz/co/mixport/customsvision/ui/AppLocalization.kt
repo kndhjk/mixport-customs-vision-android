@@ -1,6 +1,7 @@
 package nz.co.mixport.customsvision.ui
 
 import nz.co.mixport.customsvision.data.AppLanguage
+import nz.co.mixport.customsvision.data.NativeScannerBridge
 import nz.co.mixport.customsvision.data.ScannerMatchStatus
 
 fun AppLanguage.pick(english: String, chinese: String): String {
@@ -70,6 +71,11 @@ fun localizedStatus(language: AppLanguage, status: String): String {
 }
 
 fun canonicalScannerClearanceStatus(status: String?): String {
+    NativeScannerBridge.canonicalClearanceStatusOrNull(status)?.let { return it }
+    return canonicalScannerClearanceStatusFallback(status)
+}
+
+internal fun canonicalScannerClearanceStatusFallback(status: String?): String {
     val normalized = status
         .orEmpty()
         .trim()
@@ -90,8 +96,16 @@ fun overallScannerClearanceStatus(
     nzcsStatus: String?,
     mpiStatus: String?,
 ): String {
-    val normalizedNzcs = canonicalScannerClearanceStatus(nzcsStatus)
-    val normalizedMpi = canonicalScannerClearanceStatus(mpiStatus)
+    NativeScannerBridge.overallClearanceStatusOrNull(nzcsStatus, mpiStatus)?.let { return it }
+    return overallScannerClearanceStatusFallback(nzcsStatus, mpiStatus)
+}
+
+internal fun overallScannerClearanceStatusFallback(
+    nzcsStatus: String?,
+    mpiStatus: String?,
+): String {
+    val normalizedNzcs = canonicalScannerClearanceStatusFallback(nzcsStatus)
+    val normalizedMpi = canonicalScannerClearanceStatusFallback(mpiStatus)
     return when {
         normalizedNzcs == "FAILED" || normalizedMpi == "FAILED" -> "FAILED"
         normalizedNzcs == "CLEAR" && normalizedMpi == "CLEAR" -> "CLEAR"

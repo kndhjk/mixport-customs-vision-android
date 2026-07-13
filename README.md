@@ -14,7 +14,7 @@ This repo is for the first pilot company, using the same company server stack la
 
 - GitHub repo: [kndhjk/mixport-customs-vision-android](https://github.com/kndhjk/mixport-customs-vision-android)
 - Latest release page: [Releases](https://github.com/kndhjk/mixport-customs-vision-android/releases/latest)
-- Release artifact: `app-release.apk`
+- Release artifacts: `app-arm64-v8a-release.apk`, `app-armeabi-v7a-release.apk`
 
 ## What the app does
 
@@ -38,8 +38,10 @@ This repo is for the first pilot company, using the same company server stack la
   - hold the key: repeated scan until release
 - shows the scanned serial number and database comparison result at the top of the page
 - keeps the result card green only when both `NZCS` and `MPI` are `clear`
-- turns the result card yellow when either `NZCS` or `MPI` is still `hold` or `failed`, while showing the exact clearance state
+- turns the result card red immediately when either `NZCS` or `MPI` is `failed`
+- turns the result card yellow for every remaining matched `hold` combination, including `clear + hold` and `hold + hold`
 - uses different tones for matched, mismatch, and empty/error results
+- runs barcode cleanup and clearance-status normalization through a small JNI C hot path, with Kotlin fallback preserved for unsupported inputs
 
 ### 3. Mobile recognition baseline
 
@@ -83,6 +85,8 @@ That keeps the pilot safer and makes multi-company rollout possible later throug
 
 - Android Studio with SDK 34
 - Java 17
+- Android NDK `26.1.10909125`
+- CMake `3.22.1`
 - a real Android device for camera / PDA validation
 - for Hikrobot scanner validation: the vendor PDA service must already be installed on the device
 
@@ -98,6 +102,8 @@ That keeps the pilot safer and makes multi-company rollout possible later throug
 .\gradlew.bat :app:assembleRelease
 ```
 
+Release builds now emit ABI-specific APKs under `app/build/outputs/apk/release/` so field devices install a smaller package.
+
 Current release builds are debug-signed on purpose so the pilot APK stays easy to install before a dedicated production signing flow is introduced.
 
 ### Install to a connected device
@@ -109,7 +115,7 @@ C:\Users\zyzmc\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r .\app
 For release APK testing:
 
 ```powershell
-C:\Users\zyzmc\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r .\app\build\outputs\apk\release\app-release.apk
+C:\Users\zyzmc\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r .\app\build\outputs\apk\release\app-arm64-v8a-release.apk
 ```
 
 ## Validation commands
@@ -123,7 +129,7 @@ C:\Users\zyzmc\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r .\app
 ## Scanner sync workflow
 
 1. Open the `Scanner` page.
-2. Enter the Mixport API base URL, bearer token, and device ID once.
+2. On provisioned release builds, the Mixport sync profile is already embedded; only device-specific setup remains.
 3. Tap `Pull latest cache` to download the active parent / child HBL scanner dataset into local SQLite.
 4. Scan normally even when the network drops; results stay in the local pending queue.
 5. After the unloading/scanning batch is complete, tap `Upload pending` to send the batch back to the Mixport server.

@@ -5,6 +5,7 @@ local.properties
 build/
 captures/
 app/build/
+app/.cxx/
 *.iml
 training-data/raw/
 training-data/manifests/

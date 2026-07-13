@@ -1216,6 +1216,7 @@ private fun scannerStatusColor(
     return when {
         isProcessing -> ScannerIdle
         result == ScannerMatchStatus.MATCHED && clearanceOverallStatus == "CLEAR" -> ScannerOk
+        result == ScannerMatchStatus.MATCHED && clearanceOverallStatus == "FAILED" -> ScannerErr
         result == ScannerMatchStatus.MATCHED -> ScannerWarn
         result == ScannerMatchStatus.MISMATCH -> ScannerErr
         result == ScannerMatchStatus.ERROR -> ScannerErr
@@ -1232,6 +1233,8 @@ private fun scannerResultBackground(
         isProcessing -> listOf(ScannerBrandStart, ScannerBrandEnd)
         result == ScannerMatchStatus.MATCHED && clearanceOverallStatus == "CLEAR" ->
             listOf(Color(0xFF169B62), Color(0xFF0B6E3E))
+        result == ScannerMatchStatus.MATCHED && clearanceOverallStatus == "FAILED" ->
+            listOf(ScannerBrandStart, ScannerBrandEnd)
         result == ScannerMatchStatus.MATCHED -> listOf(ScannerHoldStart, ScannerHoldEnd)
         else -> listOf(ScannerBrandStart, ScannerBrandEnd)
     }
