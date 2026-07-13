@@ -29,6 +29,12 @@ This repo is for the first pilot company, using the same company server stack la
 - keeps local history for sessions, pallets, item summaries, and event logs
 - stores video evidence clips to `Movies/MixportCustoms`
 
+Live page snapshot on Hikrobot PDA:
+
+<p align="left">
+  <img src="docs/screenshots/live-screen.png" alt="Live page on Hikrobot PDA" width="320" />
+</p>
+
 ### 2. FDA scanner workflow for Hikrobot PDA devices
 
 - targets the embedded front FDA scanner head
@@ -44,12 +50,29 @@ This repo is for the first pilot company, using the same company server stack la
 - uses different tones for matched, mismatch, and empty/error results
 - runs barcode cleanup and clearance-status normalization through a small JNI C hot path, with Kotlin fallback preserved for unsupported inputs
 
+Scanner page snapshot on Hikrobot PDA:
+
+<p align="left">
+  <img src="docs/screenshots/scanner-screen.png" alt="Scanner page on Hikrobot PDA" width="320" />
+</p>
+
 ### 3. Mobile recognition baseline
 
 - live full-frame object proposals stay lightweight for phone performance
 - richer OCR, color, and label logic runs only on stable cropped targets
 - current baseline uses ML Kit plus heuristic pallet / cargo logic
 - future model path is a quantized, crop-based transformer-friendly classifier
+
+### 4. Local history / session review
+
+- the `History` page keeps an on-device session trail for offline field work
+- before the first unloading run, the page shows a clear empty state instead of a blank workflow
+
+History page snapshot on Hikrobot PDA:
+
+<p align="left">
+  <img src="docs/screenshots/history-screen.png" alt="History page on Hikrobot PDA" width="320" />
+</p>
 
 ## Pilot architecture
 
@@ -134,10 +157,12 @@ C:\Users\zyzmc\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r .\app
 2. On provisioned release builds, the Mixport sync profile is already embedded; only device-specific setup remains.
 3. Tap `Pull latest cache` to download the active parent / child HBL scanner dataset into local SQLite.
 4. With the network available, each scan uses the live Mixport lookup first so internal ops edits show up immediately; if the server is unreachable, the app falls back to the last synced local cache.
-5. When a barcode later becomes valid, the app automatically reclassifies older local `MISMATCH` / `ERROR` rows for that same code into audit-only history before upload.
-6. After the unloading/scanning batch is complete, tap `Upload pending` to send the batch back to the Mixport server.
+5. After the scan is written into the local queue, the app now attempts an immediate server upload whenever the device still has network access and a valid sync profile.
+6. The scanner page also runs a lightweight foreground retry loop, so when the Hikrobot device comes back online the pending queue is retried automatically without waiting for the next scan.
+7. If the network is unavailable or the upload call fails, the scan stays in the local pending queue and can still be retried manually via `Upload pending`.
+8. When a barcode later becomes valid, the app automatically reclassifies older local `MISMATCH` / `ERROR` rows for that same code into audit-only history before upload.
 
-The upload flow is intentionally manual so staff can decide when a completed scanner batch should be written back to the shared company environment.
+Manual upload remains available for offline backlog recovery, but the normal online workflow is now immediate auto-upload per scan with periodic foreground retry while the scanner page stays open.
 
 ## Commercial sync safeguards
 
