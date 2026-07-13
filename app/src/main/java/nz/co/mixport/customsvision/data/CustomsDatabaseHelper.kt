@@ -417,6 +417,18 @@ class CustomsDatabaseHelper(context: Context) :
         }
     }
 
+    fun deleteServerBarcodeReference(barcode: String) {
+        val normalized = normalizeScannerBarcode(barcode)
+        if (normalized.isBlank()) {
+            return
+        }
+        writableDatabase.delete(
+            "server_barcode_reference",
+            "barcode_key = ?",
+            arrayOf(normalized),
+        )
+    }
+
     fun recordScannerScan(record: ScannerRecord, lookupResult: BarcodeLookupResult?) {
         writableDatabase.insertOrThrow(
             "scanner_scan_log",

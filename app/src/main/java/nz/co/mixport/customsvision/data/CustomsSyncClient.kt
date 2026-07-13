@@ -51,6 +51,11 @@ data class ScannerUploadResponse(
     val uploadedAt: Long,
 )
 
+data class BarcodeVerificationResponse(
+    val found: Boolean,
+    val lookupResult: BarcodeLookupResult? = null,
+)
+
 class CustomsSyncClient {
     fun fetchScannerBootstrap(
         settings: ScannerSyncSettings,
@@ -116,7 +121,7 @@ class CustomsSyncClient {
         )
     }
 
-    fun verifyBarcode(settings: ScannerSyncSettings, barcode: String): BarcodeLookupResult? {
+    fun verifyBarcode(settings: ScannerSyncSettings, barcode: String): BarcodeVerificationResponse {
         val payload = JSONObject().apply {
             put("barcode", normalizeScannerBarcode(barcode))
         }
@@ -127,31 +132,39 @@ class CustomsSyncClient {
             body = payload,
         )
         if (!response.optBoolean("ok") || !response.optBoolean("found")) {
-            return null
+            return BarcodeVerificationResponse(found = false)
         }
-        val data = response.optJSONObject("data") ?: return null
-        return BarcodeLookupResult(
-            found = true,
-            databaseRecord = data.optString("parent_hbl_no").ifBlank { data.optString("barcode") },
-            status = data.optString("status"),
-            source = "SERVER_LIVE",
-            cargoTrackingId = data.optLong("id").takeIf { data.has("id") && !data.isNull("id") },
-            parentHblNo = data.optString("parent_hbl_no"),
-            matchedChildHbl = data.optString("matched_child_hbl").ifBlank { null },
-            matchedBarcodeCode = data.optString("matched_barcode_code").ifBlank { null },
-            matchedBy = data.optString("matched_by").ifBlank { null },
-            childHbls = data.optString("child_hbls").ifBlank { null },
-            barcodeCodes = data.optString("barcode_codes").ifBlank { null },
-            containerNo = data.optString("container_no").ifBlank { null },
-            vesselName = data.optString("vessel_name").ifBlank { null },
-            company = data.optString("company").ifBlank { null },
-            customerName = data.optString("customer_name").ifBlank { null },
-            location = data.optString("location").ifBlank { null },
-            pkgs = data.optInt("pkgs").takeIf { data.has("pkgs") && !data.isNull("pkgs") },
-            outTurnQty = data.optInt("out_turn_qty").takeIf { data.has("out_turn_qty") && !data.isNull("out_turn_qty") },
-            submissionDate = data.optString("submission_date").ifBlank { null },
-            customersStatus = data.optString("customers_status").ifBlank { null },
-            mpiStatus = data.optString("mpi_status").ifBlank { null },
+        val data = response.optJSONObject("data")
+        val lookupResult = data?.let {
+            BarcodeLookupResult(
+                found = true,
+                databaseRecord = it.optString("parent_hbl_no").ifBlank { it.optString("barcode") },
+                status = it.optString("status"),
+                source = "SERVER_LIVE",
+                cargoTrackingId = it.optLong("id").takeIf { value -> it.has("id") && !it.isNull("id") },
+                parentHblNo = it.optString("parent_hbl_no"),
+                matchedChildHbl = it.optString("matched_child_hbl").ifBlank { null },
+                matchedBarcodeCode = it.optString("matched_barcode_code").ifBlank { null },
+                matchedBy = it.optString("matched_by").ifBlank { null },
+                childHbls = it.optString("child_hbls").ifBlank { null },
+                barcodeCodes = it.optString("barcode_codes").ifBlank { null },
+                containerNo = it.optString("container_no").ifBlank { null },
+                vesselName = it.optString("vessel_name").ifBlank { null },
+                company = it.optString("company").ifBlank { null },
+                customerName = it.optString("customer_name").ifBlank { null },
+                location = it.optString("location").ifBlank { null },
+                pkgs = it.optInt("pkgs").takeIf { value -> it.has("pkgs") && !it.isNull("pkgs") },
+                outTurnQty = it.optInt("out_turn_qty").takeIf { value ->
+                    it.has("out_turn_qty") && !it.isNull("out_turn_qty")
+                },
+                submissionDate = it.optString("submission_date").ifBlank { null },
+                customersStatus = it.optString("customers_status").ifBlank { null },
+                mpiStatus = it.optString("mpi_status").ifBlank { null },
+            )
+        }
+        return BarcodeVerificationResponse(
+            found = lookupResult != null,
+            lookupResult = lookupResult,
         )
     }
 

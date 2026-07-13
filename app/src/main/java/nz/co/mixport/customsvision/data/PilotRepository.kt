@@ -89,22 +89,26 @@ class PilotRepository(
     ): BarcodeLookupResult? = withContext(Dispatchers.IO) {
         val normalizedBarcode = normalizeScannerBarcode(barcode)
         val local = databaseHelper.lookupBarcode(normalizedBarcode)
-        if (local != null) {
+        if (settings == null || settings.apiBaseUrl.isBlank() || settings.bearerToken.isBlank()) {
             return@withContext local
         }
-        if (settings == null || settings.apiBaseUrl.isBlank() || settings.bearerToken.isBlank()) {
-            return@withContext null
-        }
-        syncClient.verifyBarcode(settings, normalizedBarcode)
-            ?.also { remote ->
-                remote.takeIf { it.found }
-                    ?.let { found ->
-                        databaseHelper.storeServerBarcodeReferences(
-                            rows = listOf(found.toBootstrapRow(normalizedBarcode)),
-                            replaceExisting = false,
-                        )
-                    }
+
+        try {
+            val remote = syncClient.verifyBarcode(settings, normalizedBarcode)
+            if (!remote.found) {
+                databaseHelper.deleteServerBarcodeReference(normalizedBarcode)
+                return@withContext null
             }
+
+            val liveLookup = remote.lookupResult ?: return@withContext null
+            databaseHelper.storeServerBarcodeReferences(
+                rows = listOf(liveLookup.toBootstrapRow(normalizedBarcode)),
+                replaceExisting = false,
+            )
+            return@withContext liveLookup
+        } catch (_: Throwable) {
+            return@withContext local
+        }
     }
 
     suspend fun recordScannerScan(

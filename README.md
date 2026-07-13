@@ -70,7 +70,7 @@ That keeps the pilot safer and makes multi-company rollout possible later throug
 - front light and FDA trigger flow are controlled through the vendor broadcast/service bridge already wired in this repo
 - the scanner page can now pull HBL cache data from `GET /private-sync/scanner-sync/bootstrap`
 - pending offline scan results can be uploaded manually to `POST /private-sync/scanner-sync/upload`
-- live fallback verification can hit `POST /private-sync/barcode/verify` when a serial is missing from the local cache
+- when a sync profile is provisioned, each scan verifies against `POST /private-sync/barcode/verify` first and only falls back to the local cache if the live server is unavailable
 - release builds keep the server sync profile provisioned in-build instead of exposing worker-facing token entry fields
 
 ### Standard Android phones
@@ -131,7 +131,7 @@ C:\Users\zyzmc\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r .\app
 1. Open the `Scanner` page.
 2. On provisioned release builds, the Mixport sync profile is already embedded; only device-specific setup remains.
 3. Tap `Pull latest cache` to download the active parent / child HBL scanner dataset into local SQLite.
-4. Scan normally even when the network drops; results stay in the local pending queue.
+4. With the network available, each scan uses the live Mixport lookup first so internal ops edits show up immediately; if the server is unreachable, the app falls back to the last synced local cache.
 5. After the unloading/scanning batch is complete, tap `Upload pending` to send the batch back to the Mixport server.
 
 The upload flow is intentionally manual so staff can decide when a completed scanner batch should be written back to the shared company environment.
