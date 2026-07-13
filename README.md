@@ -56,6 +56,21 @@ Scanner page snapshot on Hikrobot PDA:
   <img src="docs/screenshots/scanner-screen.png" alt="Scanner page on Hikrobot PDA" width="320" />
 </p>
 
+Latest field photos from the Hikrobot PDA test run:
+
+<p align="left">
+  <img src="docs/screenshots/scanner-field-clear-en.jpg" alt="English clear state on Hikrobot PDA scanner page" width="220" />
+  <img src="docs/screenshots/scanner-field-hold-zh.jpg" alt="Hold state on Hikrobot PDA scanner page" width="220" />
+  <img src="docs/screenshots/scanner-field-mismatch-zh.jpg" alt="Mismatch state on Hikrobot PDA scanner page" width="220" />
+</p>
+
+<p align="left">
+  <img src="docs/screenshots/scanner-field-clear-zh.jpg" alt="Matched clear state on Hikrobot PDA scanner page" width="220" />
+  <img src="docs/screenshots/scanner-field-record-zh.jpg" alt="Matched record detail on Hikrobot PDA scanner page" width="220" />
+</p>
+
+English screenshots are preferred in this README. This image batch only included one English device photo, so the remaining status examples stay in the original Chinese UI to preserve the real field-state transitions.
+
 ### 3. Mobile recognition baseline
 
 - live full-frame object proposals stay lightweight for phone performance
