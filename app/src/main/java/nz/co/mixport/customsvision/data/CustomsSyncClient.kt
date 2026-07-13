@@ -185,6 +185,7 @@ class CustomsSyncClient {
                         JSONObject().apply {
                             put("localId", record.id)
                             put("scannedBarcode", record.scannedBarcode)
+                            put("barcodeKey", record.barcodeKey)
                             put("databaseRecord", record.databaseRecord)
                             put("matchStatus", record.matchStatus.name)
                             put("status", record.status)
@@ -200,6 +201,11 @@ class CustomsSyncClient {
                             put("company", record.company)
                             put("customerName", record.customerName)
                             put("location", record.location)
+                            put("dispositionState", record.dispositionState)
+                            put("reconciledAt", record.reconciledAt?.let(Instant::ofEpochMilli)?.toString())
+                            put("reconciledByLocalId", record.reconciledByLocalId)
+                            put("reconciliationReason", record.reconciliationReason)
+                            put("resolvedCargoTrackingId", record.resolvedCargoTrackingId)
                         },
                     )
                 }

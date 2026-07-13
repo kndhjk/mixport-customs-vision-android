@@ -115,7 +115,16 @@ class PilotRepository(
         record: ScannerRecord,
         lookupResult: BarcodeLookupResult?,
     ) = withContext(Dispatchers.IO) {
-        databaseHelper.recordScannerScan(record, lookupResult)
+        val localId = databaseHelper.recordScannerScan(record, lookupResult)
+        if (record.matchStatus == ScannerMatchStatus.MATCHED) {
+            databaseHelper.reconcileScannerFailuresForMatchedBarcode(
+                barcode = record.scannedBarcode,
+                resolvedByLocalId = localId,
+                resolvedCargoTrackingId = lookupResult?.cargoTrackingId,
+                reconciledAt = record.scannedAt,
+                reason = "resolved_by_successful_rescan",
+            )
+        }
     }
 
     suspend fun refreshScannerReferences(
@@ -137,6 +146,10 @@ class PilotRepository(
             syncedAt = payload.syncedAt
             if (replaceExisting || payload.rows.isNotEmpty()) {
                 databaseHelper.storeServerBarcodeReferences(payload.rows, replaceExisting = replaceExisting)
+                databaseHelper.reconcileScannerFailuresAgainstReferenceCache(
+                    reconciledAt = syncedAt,
+                    reason = "resolved_by_reference_refresh",
+                )
             }
             replaceExisting = false
 

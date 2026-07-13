@@ -429,12 +429,14 @@ class CustomsDatabaseHelper(context: Context) :
         )
     }
 
-    fun recordScannerScan(record: ScannerRecord, lookupResult: BarcodeLookupResult?) {
-        writableDatabase.insertOrThrow(
+    fun recordScannerScan(record: ScannerRecord, lookupResult: BarcodeLookupResult?): Long {
+        val normalizedBarcode = normalizeScannerBarcode(record.scannedBarcode)
+        return writableDatabase.insertOrThrow(
             "scanner_scan_log",
             null,
             ContentValues().apply {
                 put("scanned_barcode", record.scannedBarcode)
+                put("barcode_key", normalizedBarcode)
                 put("database_record", record.databaseRecord)
                 put("match_status", record.matchStatus.name)
                 put("status_text", record.status)
@@ -451,8 +453,82 @@ class CustomsDatabaseHelper(context: Context) :
                 put("customer_name", lookupResult?.customerName)
                 put("location", lookupResult?.location)
                 put("sync_state", "PENDING")
+                put("disposition_state", "ACTIVE")
+                put("resolved_cargo_tracking_id", lookupResult?.cargoTrackingId)
             },
         )
+    }
+
+    fun reconcileScannerFailuresForMatchedBarcode(
+        barcode: String,
+        resolvedByLocalId: Long,
+        resolvedCargoTrackingId: Long?,
+        reconciledAt: Long,
+        reason: String,
+    ): Int {
+        val normalizedBarcode = normalizeScannerBarcode(barcode)
+        if (normalizedBarcode.isBlank()) {
+            return 0
+        }
+        return writableDatabase.update(
+            "scanner_scan_log",
+            ContentValues().apply {
+                put("disposition_state", "AUDIT_ONLY")
+                put("reconciled_at", reconciledAt)
+                put("reconciled_by_local_id", resolvedByLocalId)
+                put("reconciliation_reason", reason)
+                put("resolved_cargo_tracking_id", resolvedCargoTrackingId)
+            },
+            """
+            id <> ? AND sync_state = ? AND disposition_state = ? AND
+            match_status IN (?, ?) AND barcode_key = ?
+            """.trimIndent(),
+            arrayOf(
+                resolvedByLocalId.toString(),
+                "PENDING",
+                "ACTIVE",
+                ScannerMatchStatus.MISMATCH.name,
+                ScannerMatchStatus.ERROR.name,
+                normalizedBarcode,
+            ),
+        )
+    }
+
+    fun reconcileScannerFailuresAgainstReferenceCache(
+        reconciledAt: Long,
+        reason: String,
+    ): Int {
+        val statement = writableDatabase.compileStatement(
+            """
+            UPDATE scanner_scan_log
+            SET disposition_state = 'AUDIT_ONLY',
+                reconciled_at = ?,
+                reconciled_by_local_id = NULL,
+                reconciliation_reason = ?,
+                resolved_cargo_tracking_id = COALESCE(
+                    (
+                        SELECT cargo_tracking_id
+                        FROM server_barcode_reference
+                        WHERE barcode_key = scanner_scan_log.barcode_key
+                        LIMIT 1
+                    ),
+                    resolved_cargo_tracking_id
+                )
+            WHERE sync_state = 'PENDING'
+              AND disposition_state = 'ACTIVE'
+              AND match_status IN ('MISMATCH', 'ERROR')
+              AND EXISTS (
+                    SELECT 1
+                    FROM server_barcode_reference
+                    WHERE barcode_key = scanner_scan_log.barcode_key
+                )
+            """.trimIndent(),
+        )
+        statement.bindLong(1, reconciledAt)
+        statement.bindString(2, reason)
+        val updated = statement.executeUpdateDelete()
+        statement.close()
+        return updated
     }
 
     fun listPendingScannerUploads(limit: Int = 500): List<PendingScannerUploadRecord> {
@@ -627,6 +703,7 @@ class CustomsDatabaseHelper(context: Context) :
             CREATE TABLE IF NOT EXISTS scanner_scan_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 scanned_barcode TEXT NOT NULL,
+                barcode_key TEXT NOT NULL DEFAULT '',
                 database_record TEXT NOT NULL,
                 match_status TEXT NOT NULL,
                 status_text TEXT NOT NULL,
@@ -643,6 +720,11 @@ class CustomsDatabaseHelper(context: Context) :
                 customer_name TEXT,
                 location TEXT,
                 sync_state TEXT NOT NULL DEFAULT 'PENDING',
+                disposition_state TEXT NOT NULL DEFAULT 'ACTIVE',
+                reconciled_at INTEGER,
+                reconciled_by_local_id INTEGER,
+                reconciliation_reason TEXT,
+                resolved_cargo_tracking_id INTEGER,
                 uploaded_batch_id INTEGER,
                 uploaded_at INTEGER
             )
@@ -670,6 +752,15 @@ class CustomsDatabaseHelper(context: Context) :
         ensureColumn(db, "server_barcode_reference", "server_error_scan_count", "INTEGER NOT NULL DEFAULT 0")
         ensureColumn(db, "server_barcode_reference", "server_last_scanned_at", "TEXT NOT NULL DEFAULT ''")
         ensureColumn(db, "server_barcode_reference", "server_last_match_status", "TEXT NOT NULL DEFAULT ''")
+        ensureColumn(db, "scanner_scan_log", "barcode_key", "TEXT NOT NULL DEFAULT ''")
+        ensureColumn(db, "scanner_scan_log", "disposition_state", "TEXT NOT NULL DEFAULT 'ACTIVE'")
+        ensureColumn(db, "scanner_scan_log", "reconciled_at", "INTEGER")
+        ensureColumn(db, "scanner_scan_log", "reconciled_by_local_id", "INTEGER")
+        ensureColumn(db, "scanner_scan_log", "reconciliation_reason", "TEXT")
+        ensureColumn(db, "scanner_scan_log", "resolved_cargo_tracking_id", "INTEGER")
+        backfillScannerScanLogBarcodeKeys(db)
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_scanner_scan_log_barcode_key ON scanner_scan_log(barcode_key)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_scanner_scan_log_sync_state ON scanner_scan_log(sync_state)")
     }
 
     private fun Cursor.toSessionRecord(): InspectionSessionRecord = InspectionSessionRecord(
@@ -742,6 +833,7 @@ class CustomsDatabaseHelper(context: Context) :
     private fun Cursor.toPendingScannerUploadRecord(): PendingScannerUploadRecord = PendingScannerUploadRecord(
         id = getLong(getColumnIndexOrThrow("id")),
         scannedBarcode = getString(getColumnIndexOrThrow("scanned_barcode")),
+        barcodeKey = getString(getColumnIndexOrThrow("barcode_key")),
         databaseRecord = getString(getColumnIndexOrThrow("database_record")),
         matchStatus = ScannerMatchStatus.valueOf(getString(getColumnIndexOrThrow("match_status"))),
         status = getString(getColumnIndexOrThrow("status_text")),
@@ -757,7 +849,41 @@ class CustomsDatabaseHelper(context: Context) :
         company = getStringOrNull(getColumnIndexOrThrow("company")),
         customerName = getStringOrNull(getColumnIndexOrThrow("customer_name")),
         location = getStringOrNull(getColumnIndexOrThrow("location")),
+        dispositionState = getString(getColumnIndexOrThrow("disposition_state")),
+        reconciledAt = getLongOrNull(getColumnIndexOrThrow("reconciled_at")),
+        reconciledByLocalId = getLongOrNull(getColumnIndexOrThrow("reconciled_by_local_id")),
+        reconciliationReason = getStringOrNull(getColumnIndexOrThrow("reconciliation_reason")),
+        resolvedCargoTrackingId = getLongOrNull(getColumnIndexOrThrow("resolved_cargo_tracking_id")),
     )
+
+    private fun backfillScannerScanLogBarcodeKeys(db: SQLiteDatabase) {
+        val cursor = db.query(
+            "scanner_scan_log",
+            arrayOf("id", "scanned_barcode"),
+            "barcode_key IS NULL OR TRIM(barcode_key) = ''",
+            null,
+            null,
+            null,
+            null,
+        )
+        cursor.use {
+            if (!it.moveToFirst()) {
+                return
+            }
+            val updateStatement = db.compileStatement(
+                "UPDATE scanner_scan_log SET barcode_key = ? WHERE id = ?",
+            )
+            do {
+                val id = it.getLong(it.getColumnIndexOrThrow("id"))
+                val scannedBarcode = it.getString(it.getColumnIndexOrThrow("scanned_barcode"))
+                updateStatement.bindString(1, normalizeScannerBarcode(scannedBarcode))
+                updateStatement.bindLong(2, id)
+                updateStatement.executeUpdateDelete()
+                updateStatement.clearBindings()
+            } while (it.moveToNext())
+            updateStatement.close()
+        }
+    }
 
     private fun Cursor.getIntOrNull(columnName: String): Int? {
         val index = getColumnIndexOrThrow(columnName)
@@ -789,6 +915,6 @@ class CustomsDatabaseHelper(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "mixport_customs_pilot.db"
-        private const val DATABASE_VERSION = 3
+        private const val DATABASE_VERSION = 4
     }
 }

@@ -107,6 +107,7 @@ data class ScannerReferenceRefreshResult(
 data class PendingScannerUploadRecord(
     val id: Long,
     val scannedBarcode: String,
+    val barcodeKey: String,
     val databaseRecord: String,
     val matchStatus: ScannerMatchStatus,
     val status: String,
@@ -122,6 +123,11 @@ data class PendingScannerUploadRecord(
     val company: String?,
     val customerName: String?,
     val location: String?,
+    val dispositionState: String,
+    val reconciledAt: Long?,
+    val reconciledByLocalId: Long?,
+    val reconciliationReason: String?,
+    val resolvedCargoTrackingId: Long?,
 )
 
 data class BarcodeLookupResult(

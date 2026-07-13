@@ -7,6 +7,7 @@ Android pilot app for Mixport's container unloading workflow. The app combines:
 - bilingual English / Chinese UI
 - local evidence capture and offline-first session storage
 - server-backed scanner cache sync with manual batch upload
+- stale-scan reconciliation so historical mismatches can downgrade into audit-only logs
 
 This repo is for the first pilot company, using the same company server stack later for API sync. The Android client does not connect directly to the production database.
 
@@ -71,6 +72,7 @@ That keeps the pilot safer and makes multi-company rollout possible later throug
 - the scanner page can now pull HBL cache data from `GET /private-sync/scanner-sync/bootstrap`
 - pending offline scan results can be uploaded manually to `POST /private-sync/scanner-sync/upload`
 - when a sync profile is provisioned, each scan verifies against `POST /private-sync/barcode/verify` first and only falls back to the local cache if the live server is unavailable
+- if a barcode originally failed because the shared database had no row yet, later successful verification automatically reconciles the old failure into an audit-only log instead of leaving it as dirty sync data
 - release builds keep the server sync profile provisioned in-build instead of exposing worker-facing token entry fields
 
 ### Standard Android phones
@@ -132,9 +134,25 @@ C:\Users\zyzmc\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r .\app
 2. On provisioned release builds, the Mixport sync profile is already embedded; only device-specific setup remains.
 3. Tap `Pull latest cache` to download the active parent / child HBL scanner dataset into local SQLite.
 4. With the network available, each scan uses the live Mixport lookup first so internal ops edits show up immediately; if the server is unreachable, the app falls back to the last synced local cache.
-5. After the unloading/scanning batch is complete, tap `Upload pending` to send the batch back to the Mixport server.
+5. When a barcode later becomes valid, the app automatically reclassifies older local `MISMATCH` / `ERROR` rows for that same code into audit-only history before upload.
+6. After the unloading/scanning batch is complete, tap `Upload pending` to send the batch back to the Mixport server.
 
 The upload flow is intentionally manual so staff can decide when a completed scanner batch should be written back to the shared company environment.
+
+## Commercial sync safeguards
+
+- `lookupBarcode()` is live-first when the release sync profile is provisioned, so internal ops edits no longer stay hidden behind stale local cache hits.
+- local scanner history keeps the original failed scan for traceability, but the SQLite upload queue now adds reconciliation metadata and can mark superseded failures as `AUDIT_ONLY`.
+- cache refresh also performs a second-pass reconciliation. If the latest scanner bootstrap now contains a previously missing barcode, the older local failure is downgraded before batch upload.
+- the server upload endpoint re-verifies every uploaded barcode against the current shared database. If the row now resolves, the API stores it as `AUDIT_ONLY` with an effective matched outcome instead of polluting business mismatch/error counts.
+- internal ops scanner audit views can now distinguish effective matched rows from audit-only reconciled rows.
+
+## Problems fixed in this release
+
+- `Admin/support updated, but the PDA still mismatched`: fixed by preferring live `POST /barcode/verify` before local cache and deleting stale cached references when the server says `found=false`.
+- `Alias/barcode edits were not reaching devices during incremental sync`: fixed by advancing the bootstrap cursor from the latest `cargo_tracking`, child-HBL alias, and barcode-alias timestamps.
+- `Old failed scans stayed in the business queue after a later successful scan`: fixed with local and server-side reconciliation so the old row becomes audit history instead of dirty operational data.
+- `Manual upload could still over-count outdated failures`: fixed by computing an effective server-side match state and excluding audit-only reconciled rows from operational scan counters.
 
 ## Training-data intake
 
