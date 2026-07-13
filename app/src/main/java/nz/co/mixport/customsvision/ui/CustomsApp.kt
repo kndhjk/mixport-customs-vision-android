@@ -23,10 +23,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.CameraAlt
-import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -60,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -72,6 +69,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Observer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
+import nz.co.mixport.customsvision.R
 import nz.co.mixport.customsvision.camera.InspectionCameraController
 import nz.co.mixport.customsvision.camera.LiveDetectionFrame
 import nz.co.mixport.customsvision.camera.LiveRecognition
@@ -204,7 +202,7 @@ fun CustomsApp(viewModel: AppViewModel) {
                     ),
                     selected = uiState.selectedDestination == AppDestination.LIVE,
                     onClick = { viewModel.selectDestination(AppDestination.LIVE) },
-                    icon = { Icon(Icons.Outlined.CameraAlt, contentDescription = null) },
+                    icon = { Icon(painter = painterResource(R.drawable.ic_nav_live), contentDescription = null) },
                     label = { Text(language.pick("Live", "识别")) },
                 )
                 NavigationBarItem(
@@ -215,7 +213,7 @@ fun CustomsApp(viewModel: AppViewModel) {
                     ),
                     selected = uiState.selectedDestination == AppDestination.SCANNER,
                     onClick = { viewModel.selectDestination(AppDestination.SCANNER) },
-                    icon = { Icon(Icons.Outlined.StopCircle, contentDescription = null) },
+                    icon = { Icon(painter = painterResource(R.drawable.ic_nav_scanner), contentDescription = null) },
                     label = { Text(language.pick("Scanner", "扫码")) },
                 )
                 NavigationBarItem(
@@ -226,7 +224,7 @@ fun CustomsApp(viewModel: AppViewModel) {
                     ),
                     selected = uiState.selectedDestination == AppDestination.HISTORY,
                     onClick = { viewModel.selectDestination(AppDestination.HISTORY) },
-                    icon = { Icon(Icons.Outlined.Folder, contentDescription = null) },
+                    icon = { Icon(painter = painterResource(R.drawable.ic_nav_history), contentDescription = null) },
                     label = { Text(language.pick("History", "历史")) },
                 )
             }
@@ -1027,11 +1025,13 @@ private fun CameraCard(
                     enabled = uiState.cameraPermissionGranted,
                 ) {
                     Icon(
-                        imageVector = if (uiState.isRecording) {
-                            Icons.Outlined.StopCircle
-                        } else {
-                            Icons.Outlined.CameraAlt
-                        },
+                        painter = painterResource(
+                            if (uiState.isRecording) {
+                                R.drawable.ic_nav_scanner
+                            } else {
+                                R.drawable.ic_nav_live
+                            },
+                        ),
                         contentDescription = null,
                     )
                     Spacer(Modifier.size(8.dp))

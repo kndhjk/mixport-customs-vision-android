@@ -1,10 +1,13 @@
 package nz.co.mixport.customsvision.data
 
+import nz.co.mixport.customsvision.nativebridge.ScannerNativeBridge
+
 private const val MIN_SCANNER_BARCODE_LENGTH = 4
 private const val MAX_SCANNER_BARCODE_LENGTH = 64
 
 fun normalizeScannerBarcode(rawValue: String): String {
-    return normalizeScannerBarcodeFallback(rawValue)
+    return ScannerNativeBridge.normalizeScannerBarcode(rawValue)
+        ?: normalizeScannerBarcodeFallback(rawValue)
 }
 
 fun isUsableScannerBarcode(value: String): Boolean {

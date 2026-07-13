@@ -2,6 +2,7 @@ package nz.co.mixport.customsvision.ui
 
 import nz.co.mixport.customsvision.data.AppLanguage
 import nz.co.mixport.customsvision.data.ScannerMatchStatus
+import nz.co.mixport.customsvision.nativebridge.ScannerNativeBridge
 
 fun AppLanguage.pick(english: String, chinese: String): String {
     if (this != AppLanguage.CHINESE) {
@@ -70,7 +71,8 @@ fun localizedStatus(language: AppLanguage, status: String): String {
 }
 
 fun canonicalScannerClearanceStatus(status: String?): String {
-    return canonicalScannerClearanceStatusFallback(status)
+    return ScannerNativeBridge.canonicalScannerClearanceStatus(status)
+        ?: canonicalScannerClearanceStatusFallback(status)
 }
 
 internal fun canonicalScannerClearanceStatusFallback(status: String?): String {
@@ -94,7 +96,8 @@ fun overallScannerClearanceStatus(
     nzcsStatus: String?,
     mpiStatus: String?,
 ): String {
-    return overallScannerClearanceStatusFallback(nzcsStatus, mpiStatus)
+    return ScannerNativeBridge.overallScannerClearanceStatus(nzcsStatus, mpiStatus)
+        ?: overallScannerClearanceStatusFallback(nzcsStatus, mpiStatus)
 }
 
 internal fun overallScannerClearanceStatusFallback(

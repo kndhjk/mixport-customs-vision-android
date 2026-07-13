@@ -82,18 +82,31 @@ plugins {
 android {
     namespace = "nz.co.mixport.customsvision"
     compileSdk = 34
+    ndkVersion = "26.1.10909125"
     flavorDimensions += "distribution"
 
     defaultConfig {
         applicationId = "nz.co.mixport.customsvision"
         minSdk = 26
         targetSdk = 34
-        versionCode = 13
-        versionName = "0.6.8"
+        versionCode = 14
+        versionName = "0.6.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        resourceConfigurations += listOf("en", "zh")
         vectorDrawables {
             useSupportLibrary = true
+        }
+        externalNativeBuild {
+            cmake {
+                cFlags += listOf(
+                    "-std=c17",
+                    "-Oz",
+                    "-ffunction-sections",
+                    "-fdata-sections",
+                    "-fvisibility=hidden",
+                )
+            }
         }
     }
 
@@ -131,6 +144,10 @@ android {
             }
             isMinifyEnabled = true
             isShrinkResources = true
+            ndk {
+                abiFilters += listOf("arm64-v8a")
+                debugSymbolLevel = "NONE"
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -155,6 +172,13 @@ android {
         kotlinCompilerExtensionVersion = "1.5.14"
     }
 
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
     lint {
         abortOnError = true
         checkReleaseBuilds = true
@@ -174,6 +198,7 @@ dependencies {
     androidTestImplementation(composeBom)
 
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.4")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
@@ -184,8 +209,6 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
-    implementation("com.google.android.material:material:1.12.0")
 
     implementation("androidx.camera:camera-camera2:1.3.4")
     implementation("androidx.camera:camera-lifecycle:1.3.4")

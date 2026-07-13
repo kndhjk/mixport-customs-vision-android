@@ -15,7 +15,7 @@ This repo is for the first pilot company, using the same company server stack la
 
 - GitHub repo: [kndhjk/mixport-customs-vision-android](https://github.com/kndhjk/mixport-customs-vision-android)
 - Latest release page: [Releases](https://github.com/kndhjk/mixport-customs-vision-android/releases/latest)
-- Release artifacts: `app-public-debug.apk`, `app-public-release.apk`
+- Release artifacts: universal `app-public-debug.apk` plus a hardened `arm64-v8a` `app-public-release.apk`
 
 ## What the app does
 
@@ -48,7 +48,7 @@ Live page snapshot on Hikrobot PDA:
 - turns the result card red immediately when either `NZCS` or `MPI` is `failed`
 - turns the result card yellow for every remaining matched `hold` combination, including `clear + hold` and `hold + hold`
 - uses different tones for matched, mismatch, and empty/error results
-- keeps barcode cleanup and clearance-state normalization in pure Kotlin so the public build no longer ships a native/JNI hot path just for lightweight string operations
+- keeps barcode cleanup and clearance-state normalization on a tiny C/JNI bridge with Kotlin fallback, while the heavier package-size win comes from `arm64-v8a`-only release packaging
 
 Scanner page snapshot on Hikrobot PDA:
 
@@ -155,7 +155,7 @@ Two distribution variants now exist:
 .\gradlew.bat :app:assembleFieldRelease
 ```
 
-When no release keystore is configured, Gradle emits unsigned release APKs for controlled signing. GitHub release automation only publishes the hardened `public` artifacts, while the `field` artifacts stay local / internal.
+Release builds now target `arm64-v8a` only so the published secure APK does not carry unused x86/x86_64/armeabi-v7a ML Kit native payloads. When no release keystore is configured, Gradle emits unsigned release APKs for controlled signing. GitHub release automation only publishes the hardened `public` artifacts, while the `field` artifacts stay local / internal.
 
 To enable production signing locally or in GitHub Actions, provide these values through environment variables, Gradle properties, or an untracked `release-signing.local.properties` file:
 
@@ -170,10 +170,10 @@ To enable production signing locally or in GitHub Actions, provide these values 
 C:\Users\zyzmc\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r .\app\build\outputs\apk\field\debug\app-field-debug.apk
 ```
 
-For public GitHub-release verification:
+For public GitHub-release verification, install the universal public debug build locally unless a signed public release keystore is configured:
 
 ```powershell
-C:\Users\zyzmc\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r .\app\build\outputs\apk\public\release\app-public-release.apk
+C:\Users\zyzmc\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r .\app\build\outputs\apk\public\debug\app-public-debug.apk
 ```
 
 ## Validation commands
@@ -245,7 +245,8 @@ The app stores the imported profile locally in encrypted form, refreshes its sta
 - `Any app could previously push sync extras through the launcher activity`: fixed by moving provisioning into a dedicated non-exported admin activity with HTTPS + host-allowlist validation before local state is changed.
 - `Public release and company-device rollout previously shared the same attack surface`: fixed by splitting builds into hardened `public` and controlled `field` variants, while keeping the same package/data path for internal upgrades.
 - `Release builds were only debug-signed`: fixed by switching the public build to unsigned release output unless a real release keystore is provided.
-- `Barcode normalization used JNI for tiny string work`: fixed by removing the native bridge and keeping the logic in pure Kotlin.
+- `Universal release APKs stayed too large because every ABI shipped the same ML Kit native payload`: fixed by targeting `arm64-v8a` for release outputs and filtering app resources to English + Chinese only.
+- `Scanner result normalization should stay fast without pulling core security or sync logic into native code`: fixed by keeping only barcode and clearance-state normalization on a tiny C bridge, with Kotlin fallback preserving behavior when native loading is unavailable.
 
 ## Training-data intake
 
