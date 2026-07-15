@@ -415,6 +415,18 @@ class CustomsDatabaseHelper(context: Context) :
 
     fun getPendingScannerUploadCount(): Int = scannerSyncStore.getPendingScannerUploadCount()
 
+    fun getScannerRecordAudit(
+        localLogId: Long?,
+        scannedBarcode: String,
+        scannedAt: Long,
+    ): ScannerRecordAudit? {
+        return scannerSyncStore.getScannerRecordAudit(
+            localLogId = localLogId,
+            scannedBarcode = scannedBarcode,
+            scannedAt = scannedAt,
+        )
+    }
+
     private fun getEvent(eventId: Long): EventLogRecord? {
         return readableDatabase.query(
             "event_log",

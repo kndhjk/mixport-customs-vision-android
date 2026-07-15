@@ -274,6 +274,8 @@ fun CustomsApp(viewModel: AppViewModel) {
                 onScannerPdaDetected = viewModel::onScannerPdaDetected,
                 onScannerWorkflowModeChanged = viewModel::setScannerWorkflowMode,
                 onScannerHistoryCleared = viewModel::clearScannerHistory,
+                onScannerHistorySelected = viewModel::showScannerHistoryDetail,
+                onScannerHistoryDetailDismissed = viewModel::dismissScannerHistoryDetail,
                 onScannerOnboardingDismissed = viewModel::dismissScannerOnboarding,
             )
 

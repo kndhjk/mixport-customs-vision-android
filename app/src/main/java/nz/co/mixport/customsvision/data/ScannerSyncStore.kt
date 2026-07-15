@@ -385,6 +385,38 @@ class ScannerSyncStore(
         }
     }
 
+    fun getScannerRecordAudit(
+        localLogId: Long?,
+        scannedBarcode: String,
+        scannedAt: Long,
+    ): ScannerRecordAudit? {
+        val normalizedBarcode = normalizeScannerBarcode(scannedBarcode)
+        if (localLogId == null && normalizedBarcode.isBlank()) {
+            return null
+        }
+        val selection: String
+        val args: Array<String>
+        if (localLogId != null) {
+            selection = "id = ?"
+            args = arrayOf(localLogId.toString())
+        } else {
+            selection = "barcode_key = ? AND scanned_at = ?"
+            args = arrayOf(normalizedBarcode, scannedAt.toString())
+        }
+        return readableDatabaseProvider().query(
+            "scanner_scan_log",
+            null,
+            selection,
+            args,
+            null,
+            null,
+            "id DESC",
+            "1",
+        ).use { cursor ->
+            if (cursor.moveToFirst()) cursor.toScannerRecordAudit() else null
+        }
+    }
+
     private fun Cursor.toServerBarcodeLookupResult(): BarcodeLookupResult = BarcodeLookupResult(
         found = true,
         databaseRecord = getString(getColumnIndexOrThrow("parent_hbl_no")),
@@ -441,6 +473,19 @@ class ScannerSyncStore(
         customerName = getStringOrNull(getColumnIndexOrThrow("customer_name")),
         location = getStringOrNull(getColumnIndexOrThrow("location")),
         dispositionState = getString(getColumnIndexOrThrow("disposition_state")),
+        reconciledAt = getLongOrNull(getColumnIndexOrThrow("reconciled_at")),
+        reconciledByLocalId = getLongOrNull(getColumnIndexOrThrow("reconciled_by_local_id")),
+        reconciliationReason = getStringOrNull(getColumnIndexOrThrow("reconciliation_reason")),
+        resolvedCargoTrackingId = getLongOrNull(getColumnIndexOrThrow("resolved_cargo_tracking_id")),
+    )
+
+    private fun Cursor.toScannerRecordAudit(): ScannerRecordAudit = ScannerRecordAudit(
+        localLogId = getLong(getColumnIndexOrThrow("id")),
+        cargoTrackingId = getLongOrNull(getColumnIndexOrThrow("cargo_tracking_id")),
+        syncState = getString(getColumnIndexOrThrow("sync_state")),
+        dispositionState = getString(getColumnIndexOrThrow("disposition_state")),
+        uploadedBatchId = getLongOrNull(getColumnIndexOrThrow("uploaded_batch_id")),
+        uploadedAt = getLongOrNull(getColumnIndexOrThrow("uploaded_at")),
         reconciledAt = getLongOrNull(getColumnIndexOrThrow("reconciled_at")),
         reconciledByLocalId = getLongOrNull(getColumnIndexOrThrow("reconciled_by_local_id")),
         reconciliationReason = getStringOrNull(getColumnIndexOrThrow("reconciliation_reason")),

@@ -45,6 +45,8 @@ Live page snapshot on Hikrobot PDA:
   - hold the key: repeated scan until release
 - shows the scanned serial number and database comparison result at the top of the page
 - shows live scan progress for the matched cargo row, including package / child-HBL completion, repeat scans, and current container scan totals
+- keeps the recent-scan list lightweight on-device, then opens a full detail sheet on demand so workers can inspect matched HBLs, child HBLs, barcode codes, clearance state, counts, and local upload/audit trace without leaving the scanner page
+- stores a lookup snapshot with each recent scan so the matched context can still be reviewed quickly even after the live cache refreshes later
 - keeps the result card green only when both `NZCS` and `MPI` are `clear`
 - turns the result card red immediately when either `NZCS` or `MPI` is `failed`
 - turns the result card yellow for every remaining matched `hold` combination, including `clear + hold` and `hold + hold`
@@ -202,6 +204,7 @@ GitHub Actions now runs the same public lint, unit-test, and public/field build 
 7. The scanner page also runs a lightweight foreground retry loop, so when the Hikrobot device comes back online the pending queue is retried automatically without waiting for the next scan.
 8. If the network is unavailable or the upload call fails, the scan stays in the local pending queue until connectivity returns.
 9. When a barcode later becomes valid, the app automatically reclassifies older local `MISMATCH` / `ERROR` rows for that same code into audit-only history before upload.
+10. Workers can tap any recent scan to open a local detail sheet with the stored lookup snapshot, live clearance summary, scan counters, and upload/audit trace, without exposing sync credentials or admin-only controls.
 
 ### Secure provisioning import
 
@@ -240,6 +243,8 @@ The app stores the imported profile locally in encrypted form, refreshes its sta
 
 - `The server-side row changed, but the PDA still mismatched`: fixed by preferring live verification before local cache and deleting stale cached references when the server says `found=false`.
 - `Workers could not see how many pieces or child HBLs were already scanned`: fixed by returning server-side expected/completed/remaining counters plus per-container scan totals to the PDA result card.
+- `Recent scans were too dense on the main page and still did not expose the full matched record`: fixed by slimming the list into worker-friendly summary cards and moving the full cargo / audit payload into an on-demand detail sheet.
+- `History entries lost too much context after the next scan`: fixed by storing a per-scan lookup snapshot in local preferences while keeping the authoritative upload/audit trace in SQLite.
 - `Alias/barcode edits were not reaching devices during incremental sync`: fixed by advancing the bootstrap cursor from the latest `cargo_tracking`, child-HBL alias, and barcode-alias timestamps.
 - `Old failed scans stayed in the business queue after a later successful scan`: fixed with local and server-side reconciliation so the old row becomes audit history instead of dirty operational data.
 - `Manual upload could still over-count outdated failures`: fixed by computing an effective server-side match state and excluding audit-only reconciled rows from operational scan counters.

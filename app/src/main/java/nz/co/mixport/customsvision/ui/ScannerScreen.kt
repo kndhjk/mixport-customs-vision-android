@@ -3,6 +3,7 @@
 import android.media.AudioManager
 import android.media.ToneGenerator
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,12 +19,16 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -40,14 +45,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import nz.co.mixport.customsvision.data.AppLanguage
+import nz.co.mixport.customsvision.data.BarcodeLookupResult
 import nz.co.mixport.customsvision.data.normalizeScannerBarcode
 import nz.co.mixport.customsvision.data.ScannerMatchStatus
+import nz.co.mixport.customsvision.data.ScannerRecordDetail
 import nz.co.mixport.customsvision.data.ScannerRecord
 import nz.co.mixport.customsvision.scanner.HikPdaScanController
 import nz.co.mixport.customsvision.scanner.PdaHardwareKeyDispatcher
@@ -75,6 +83,8 @@ fun ScannerScreen(
     onScannerPdaDetected: (String, String) -> Unit,
     onScannerWorkflowModeChanged: (PdaScanWorkflowMode) -> Unit,
     onScannerHistoryCleared: () -> Unit,
+    onScannerHistorySelected: (ScannerRecord) -> Unit,
+    onScannerHistoryDetailDismissed: () -> Unit,
     onScannerOnboardingDismissed: () -> Unit,
 ) {
     val language = uiState.appLanguage
@@ -347,8 +357,20 @@ fun ScannerScreen(
                 language = language,
                 scanner = scanner,
                 onClearHistory = onScannerHistoryCleared,
+                onHistorySelected = onScannerHistorySelected,
             )
         }
+    }
+
+    scanner.selectedHistoryRecord?.let { selectedRecord ->
+        ScannerHistoryDetailSheet(
+            language = language,
+            selectedRecord = selectedRecord,
+            detail = scanner.selectedHistoryDetail,
+            isLoading = scanner.isHistoryDetailLoading,
+            errorMessage = scanner.historyDetailError,
+            onDismiss = onScannerHistoryDetailDismissed,
+        )
     }
 }
 
@@ -722,7 +744,9 @@ private fun ScannerHistoryCard(
     language: AppLanguage,
     scanner: ScannerUiState,
     onClearHistory: () -> Unit,
+    onHistorySelected: (ScannerRecord) -> Unit,
 ) {
+    val historyPreview = remember(scanner.history) { scanner.history.take(6) }
     ElevatedCard {
         Column(
             modifier = Modifier.padding(18.dp),
@@ -755,10 +779,11 @@ private fun ScannerHistoryCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                scanner.history.take(6).forEach { record ->
+                historyPreview.forEach { record ->
                     ScannerHistoryItem(
                         language = language,
                         record = record,
+                        onClick = { onHistorySelected(record) },
                     )
                 }
             }
@@ -770,13 +795,34 @@ private fun ScannerHistoryCard(
 private fun ScannerHistoryItem(
     language: AppLanguage,
     record: ScannerRecord,
+    onClick: () -> Unit,
 ) {
     val clearanceOverallStatus = if (record.matchStatus == ScannerMatchStatus.MATCHED) {
         overallScannerClearanceStatus(record.customersStatus, record.mpiStatus)
     } else {
         null
     }
+    val lookup = record.lookupSnapshot
+    val summaryLine = remember(language, record, lookup) {
+        listOfNotNull(
+            lookup?.parentHblNo?.takeIf(String::isNotBlank),
+            lookup?.matchedChildHbl?.takeIf(String::isNotBlank),
+            lookup?.matchedBarcodeCode?.takeIf(String::isNotBlank),
+        ).joinToString(" | ").ifBlank {
+            localizedScannerDatabaseRecord(language, record.databaseRecord)
+        }
+    }
+    val metaLine = remember(language, record, lookup) {
+        buildList {
+            add(localizedScannerStatusText(language, record.status))
+            lookup?.containerNo?.takeIf(String::isNotBlank)?.let(::add)
+            lookup?.company?.takeIf(String::isNotBlank)?.let(::add)
+        }.joinToString(" | ").ifBlank {
+            localizedScannerSource(language, record.source)
+        }
+    }
     Card(
+        modifier = Modifier.clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
             containerColor = ScannerPanelTint,
         ),
@@ -785,7 +831,7 @@ private fun ScannerHistoryItem(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -795,6 +841,9 @@ private fun ScannerHistoryItem(
                 Text(
                     text = record.scannedBarcode,
                     fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 ScannerStatusPill(
                     label = language.pick("Status", "状态"),
@@ -811,34 +860,457 @@ private fun ScannerHistoryItem(
                     ),
                 )
             }
-            ScannerDetailRow(
-                label = language.pick("Database record", "数据库记录"),
-                value = localizedScannerDatabaseRecord(language, record.databaseRecord),
+            Text(
+                text = summaryLine,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
-            if (record.matchStatus == ScannerMatchStatus.MATCHED &&
-                (record.customersStatus != null || record.mpiStatus != null)
+            Text(
+                text = metaLine,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                ScannerDetailRow(
-                    label = language.pick("NZCS / MPI", "NZCS / MPI"),
-                    value = listOf(
-                        "NZCS ${localizedStatus(language, canonicalScannerClearanceStatus(record.customersStatus))}",
-                        "MPI ${localizedStatus(language, canonicalScannerClearanceStatus(record.mpiStatus))}",
-                    ).joinToString(" | "),
+                Text(
+                    text = formatTimestamp(record.scannedAt),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = language.pick("View details", "查看详情"),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = ScannerBrandStart,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
-            ScannerDetailRow(
-                label = language.pick("Pickup status", "提货状态"),
-                value = localizedScannerStatusText(language, record.status),
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ScannerHistoryDetailSheet(
+    language: AppLanguage,
+    selectedRecord: ScannerRecord,
+    detail: ScannerRecordDetail?,
+    isLoading: Boolean,
+    errorMessage: String?,
+    onDismiss: () -> Unit,
+) {
+    val detailRecord = detail?.record ?: selectedRecord
+    val lookup = detail?.lookupSnapshot ?: detailRecord.lookupSnapshot
+    val audit = detail?.audit
+    val clearanceOverallStatus = if (detailRecord.matchStatus == ScannerMatchStatus.MATCHED) {
+        overallScannerClearanceStatus(detailRecord.customersStatus, detailRecord.mpiStatus)
+    } else {
+        null
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+    ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text(
+                                text = language.pick("Scan detail", "扫码详情"),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = detailRecord.scannedBarcode,
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                        ScannerStatusPill(
+                            label = language.pick("Status", "状态"),
+                            value = scannerResultTitle(
+                                language = language,
+                                result = detailRecord.matchStatus,
+                                isProcessing = false,
+                                clearanceOverallStatus = clearanceOverallStatus,
+                            ),
+                            color = scannerStatusColor(
+                                result = detailRecord.matchStatus,
+                                isProcessing = false,
+                                clearanceOverallStatus = clearanceOverallStatus,
+                            ),
+                        )
+                    }
+
+                    lookup?.let { lookupSnapshot ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ScannerStatusPill(
+                                label = language.pick("Clearance", "清关"),
+                                value = localizedStatus(
+                                    language,
+                                    overallScannerClearanceStatus(
+                                        detailRecord.customersStatus,
+                                        detailRecord.mpiStatus,
+                                    ),
+                                ),
+                                color = scannerStatusColor(
+                                    result = ScannerMatchStatus.MATCHED,
+                                    isProcessing = false,
+                                    clearanceOverallStatus = overallScannerClearanceStatus(
+                                        detailRecord.customersStatus,
+                                        detailRecord.mpiStatus,
+                                    ),
+                                ),
+                            )
+                            ScannerStatusPill(
+                                label = language.pick("Match", "命中"),
+                                value = localizedScannerMatchRoute(
+                                    language,
+                                    lookupSnapshot.matchedBy,
+                                ),
+                                color = Color.Black.copy(alpha = 0.72f),
+                            )
+                        }
+                    }
+
+                    if (isLoading && detail == null) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            CircularProgressIndicator(strokeWidth = 2.dp)
+                            Text(
+                                text = language.pick(
+                                    "Loading the saved cargo detail...",
+                                    "正在加载本地保存的货物详情...",
+                                ),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+
+                    errorMessage?.takeIf(String::isNotBlank)?.let { message ->
+                        Text(
+                            text = message,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
+
+            item {
+                ScannerDetailSection(
+                    title = language.pick("Scan record", "扫描记录"),
+                    rows = buildList {
+                        add(language.pick("Database record", "数据库记录") to localizedScannerDatabaseRecord(language, detailRecord.databaseRecord))
+                        add(language.pick("Pickup status", "提货状态") to localizedScannerStatusText(language, detailRecord.status))
+                        add(language.pick("Source", "来源") to localizedScannerSource(language, detailRecord.source))
+                        add(language.pick("Time", "时间") to formatTimestamp(detailRecord.scannedAt))
+                        detailRecord.localLogId?.let {
+                            add(language.pick("Local log ID", "本地日志 ID") to it.toString())
+                        }
+                    },
+                )
+            }
+
+            lookup?.let { lookupSnapshot ->
+                item {
+                    ScannerDetailSection(
+                        title = language.pick("Cargo detail", "货物详情"),
+                        rows = buildList {
+                            add(language.pick("Main HBL", "主 HBL") to (lookupSnapshot.parentHblNo ?: detailRecord.databaseRecord))
+                            scannerLookupMatchedValue(lookupSnapshot)?.let {
+                                add(language.pick("Matched value", "命中值") to it)
+                            }
+                            lookupSnapshot.childHbls?.takeIf(String::isNotBlank)?.let {
+                                add(language.pick("Scan HBLs", "Scan HBLs") to it)
+                            }
+                            lookupSnapshot.barcodeCodes?.takeIf(String::isNotBlank)?.let {
+                                add(language.pick("Barcode codes", "条码编码") to it)
+                            }
+                            lookupSnapshot.containerNo?.takeIf(String::isNotBlank)?.let { containerNo ->
+                                add(
+                                    language.pick("Container / vessel", "柜号 / 船名") to listOfNotNull(
+                                        containerNo,
+                                        lookupSnapshot.vesselName?.takeIf(String::isNotBlank),
+                                    ).joinToString(" | "),
+                                )
+                            }
+                            listOfNotNull(
+                                lookupSnapshot.company?.takeIf(String::isNotBlank),
+                                lookupSnapshot.customerName?.takeIf(String::isNotBlank),
+                            ).joinToString(" | ").takeIf(String::isNotBlank)?.let {
+                                add(language.pick("Company / customer", "公司 / 客户") to it)
+                            }
+                            lookupSnapshot.location?.takeIf(String::isNotBlank)?.let {
+                                add(language.pick("Location", "库位") to it)
+                            }
+                            lookupSnapshot.submissionDate?.takeIf(String::isNotBlank)?.let {
+                                add(language.pick("Submitted", "提交时间") to it)
+                            }
+                            scannerLookupCargoLine(language, lookupSnapshot)?.let {
+                                add(language.pick("Cargo totals", "货物计数") to it)
+                            }
+                        },
+                    )
+                }
+
+                item {
+                    ScannerDetailSection(
+                        title = language.pick("Clearance and scan progress", "清关与扫码进度"),
+                        rows = buildList {
+                            scannerLookupClearanceLine(language, detailRecord, lookupSnapshot)?.let {
+                                add(language.pick("NZCS / MPI", "NZCS / MPI") to it)
+                            }
+                            scannerLookupProgressLine(language, lookupSnapshot)?.let {
+                                add(language.pick("Progress", "进度") to it)
+                            }
+                            scannerLookupTotalsLine(language, lookupSnapshot)?.let {
+                                add(language.pick("Totals", "总计") to it)
+                            }
+                            lookupSnapshot.serverLastScannedAt?.takeIf(String::isNotBlank)?.let {
+                                add(language.pick("Last server scan", "最近服务端扫描") to it)
+                            }
+                            lookupSnapshot.serverLastMatchStatus?.takeIf(String::isNotBlank)?.let {
+                                add(
+                                    language.pick("Last server result", "最近服务端结果") to localizedScannerMatchStatus(
+                                        language,
+                                        it,
+                                    ),
+                                )
+                            }
+                        },
+                    )
+                }
+            }
+
+            audit?.let { auditSnapshot ->
+                item {
+                    ScannerDetailSection(
+                        title = language.pick("Upload and audit", "上传与审计"),
+                        rows = buildList {
+                            add(language.pick("Upload state", "上传状态") to localizedScannerSyncState(language, auditSnapshot.syncState))
+                            add(language.pick("Record state", "记录状态") to localizedScannerDispositionState(language, auditSnapshot.dispositionState))
+                            auditSnapshot.uploadedBatchId?.let {
+                                add(language.pick("Upload batch", "上传批次") to "#$it")
+                            }
+                            auditSnapshot.uploadedAt?.let {
+                                add(language.pick("Uploaded at", "上传时间") to formatTimestamp(it))
+                            }
+                            auditSnapshot.cargoTrackingId?.let {
+                                add(language.pick("Cargo tracking ID", "货物跟踪 ID") to it.toString())
+                            }
+                            auditSnapshot.resolvedCargoTrackingId?.let {
+                                add(language.pick("Resolved cargo ID", "修正货物 ID") to it.toString())
+                            }
+                            auditSnapshot.reconciledAt?.let {
+                                add(language.pick("Reconciled at", "转审计时间") to formatTimestamp(it))
+                            }
+                            auditSnapshot.reconciliationReason?.takeIf(String::isNotBlank)?.let {
+                                add(language.pick("Audit reason", "审计原因") to localizedScannerAuditReason(language, it))
+                            }
+                        },
+                    )
+                }
+            }
+
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(language.pick("Close", "关闭"))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScannerDetailSection(
+    title: String,
+    rows: List<Pair<String, String>>,
+) {
+    if (rows.isEmpty()) {
+        return
+    }
+    ElevatedCard {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
             )
-            ScannerDetailRow(
-                label = language.pick("Source", "来源"),
-                value = localizedScannerSource(language, record.source),
-            )
-            ScannerDetailRow(
-                label = language.pick("Time", "时间"),
-                value = formatTimestamp(record.scannedAt),
+            rows.forEach { (label, value) ->
+                ScannerDetailRow(label = label, value = value)
+            }
+        }
+    }
+}
+
+private fun scannerLookupMatchedValue(lookup: BarcodeLookupResult): String? {
+    return when {
+        !lookup.matchedBarcodeCode.isNullOrBlank() -> lookup.matchedBarcodeCode
+        !lookup.matchedChildHbl.isNullOrBlank() -> lookup.matchedChildHbl
+        !lookup.parentHblNo.isNullOrBlank() -> lookup.parentHblNo
+        else -> null
+    }
+}
+
+private fun scannerLookupClearanceLine(
+    language: AppLanguage,
+    record: ScannerRecord,
+    lookup: BarcodeLookupResult,
+): String? {
+    val nzcs = canonicalScannerClearanceStatus(record.customersStatus ?: lookup.customersStatus)
+    val mpi = canonicalScannerClearanceStatus(record.mpiStatus ?: lookup.mpiStatus)
+    return listOf(
+        "NZCS ${localizedStatus(language, nzcs)}",
+        "MPI ${localizedStatus(language, mpi)}",
+    ).joinToString(" | ")
+}
+
+private fun scannerLookupCargoLine(
+    language: AppLanguage,
+    lookup: BarcodeLookupResult,
+): String? {
+    return buildList {
+        lookup.pkgs?.let {
+            add(language.pick("Packages $it", "件数 $it"))
+        }
+        lookup.outTurnQty?.let {
+            add(language.pick("Out-turn $it", "出库数 $it"))
+        }
+    }.joinToString(" | ").ifBlank { null }
+}
+
+private fun scannerLookupProgressLine(
+    language: AppLanguage,
+    lookup: BarcodeLookupResult,
+): String? {
+    val expected = lookup.scannerExpectedScanCount ?: 0
+    val completed = lookup.scannerCompletedScanCount ?: 0
+    val remaining = lookup.scannerRemainingScanCount ?: 0
+    val progressLabel = when (lookup.scannerTargetMode?.trim()?.lowercase()) {
+        "child_hbls" -> language.pick("Scan HBLs", "Scan HBLs")
+        "pkgs" -> language.pick("Packages", "件数")
+        else -> language.pick("This cargo", "本票")
+    }
+    return buildList {
+        if (expected > 0) {
+            add("$progressLabel $completed/$expected")
+            add(language.pick("Remaining $remaining", "剩余 $remaining"))
+        } else if (lookup.serverScanCount > 0) {
+            add(language.pick("Scans ${lookup.serverScanCount}", "累计扫描 ${lookup.serverScanCount} 次"))
+        }
+        lookup.scannerRepeatMatchCount?.takeIf { it > 0 }?.let { repeats ->
+            add(language.pick("Repeat matches $repeats", "重复命中 $repeats 次"))
+        }
+        lookup.scannerIsComplete?.let { complete ->
+            add(language.pick(if (complete) "Complete" else "Not complete", if (complete) "已完成" else "未完成"))
+        }
+    }.joinToString(" | ").ifBlank { null }
+}
+
+private fun scannerLookupTotalsLine(
+    language: AppLanguage,
+    lookup: BarcodeLookupResult,
+): String? {
+    return buildList {
+        if (lookup.serverScanCount > 0) {
+            add(language.pick("This record ${lookup.serverScanCount}", "本票 ${lookup.serverScanCount} 次"))
+        }
+        lookup.containerScanCount?.let { scans ->
+            val rowCount = lookup.containerRowCount
+            val matchedRows = lookup.containerMatchedRowCount
+            if (rowCount != null && rowCount > 0 && matchedRows != null) {
+                add(language.pick("Container $scans | Rows $matchedRows/$rowCount", "本柜 $scans 次 | 已扫行 $matchedRows/$rowCount"))
+            } else {
+                add(language.pick("Container $scans", "本柜 $scans 次"))
+            }
+        }
+        if (lookup.serverMismatchScanCount > 0 || lookup.serverErrorScanCount > 0) {
+            add(
+                language.pick(
+                    "Mismatch ${lookup.serverMismatchScanCount} | Error ${lookup.serverErrorScanCount}",
+                    "未匹配 ${lookup.serverMismatchScanCount} | 错误 ${lookup.serverErrorScanCount}",
+                ),
             )
         }
+    }.joinToString(" | ").ifBlank { null }
+}
+
+private fun localizedScannerMatchStatus(
+    language: AppLanguage,
+    matchStatus: String,
+): String {
+    return when (matchStatus.trim().uppercase()) {
+        ScannerMatchStatus.MATCHED.name -> language.pick("Matched", "已匹配")
+        ScannerMatchStatus.MISMATCH.name -> language.pick("Not found", "未找到")
+        ScannerMatchStatus.ERROR.name -> language.pick("Error", "错误")
+        ScannerMatchStatus.WAITING.name -> language.pick("Waiting", "等待中")
+        else -> matchStatus
+    }
+}
+
+private fun localizedScannerSyncState(
+    language: AppLanguage,
+    syncState: String,
+): String {
+    return when (syncState.trim().uppercase()) {
+        "SYNCED" -> language.pick("Uploaded", "已上传")
+        "SUPERSEDED" -> language.pick("Superseded", "已转审计")
+        else -> language.pick("Pending upload", "待上传")
+    }
+}
+
+private fun localizedScannerDispositionState(
+    language: AppLanguage,
+    dispositionState: String,
+): String {
+    return when (dispositionState.trim().uppercase()) {
+        "AUDIT_ONLY" -> language.pick("Audit only", "仅审计")
+        else -> language.pick("Active", "有效记录")
+    }
+}
+
+private fun localizedScannerAuditReason(
+    language: AppLanguage,
+    reason: String,
+): String {
+    return when (reason.trim()) {
+        "resolved_by_successful_rescan" -> language.pick(
+            "A later successful scan replaced the older failure.",
+            "后续成功扫描已替代较早的失败记录。",
+        )
+        "resolved_by_reference_refresh" -> language.pick(
+            "The refreshed cargo list resolved the older failure.",
+            "刷新后的货物清单已修正较早的失败记录。",
+        )
+        else -> reason
     }
 }
 

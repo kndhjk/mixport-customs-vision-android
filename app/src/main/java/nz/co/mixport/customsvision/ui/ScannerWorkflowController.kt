@@ -37,6 +37,10 @@ internal class ScannerWorkflowController(
                     statusMessage = null,
                     lastProcessedBarcode = null,
                     lastLookupResult = null,
+                    selectedHistoryRecord = null,
+                    selectedHistoryDetail = null,
+                    isHistoryDetailLoading = false,
+                    historyDetailError = null,
                 ),
             )
         }
@@ -51,6 +55,62 @@ internal class ScannerWorkflowController(
                     statusMessage = waitingScannerMessage(it.appLanguage),
                     lastProcessedBarcode = null,
                     lastLookupResult = null,
+                ),
+            )
+        }
+    }
+
+    fun showScannerHistoryDetail(record: ScannerRecord) {
+        state.update {
+            it.copy(
+                scanner = it.scanner.copy(
+                    selectedHistoryRecord = record,
+                    selectedHistoryDetail = null,
+                    isHistoryDetailLoading = true,
+                    historyDetailError = null,
+                ),
+            )
+        }
+        scope.launch {
+            runCatching {
+                repository.getScannerRecordDetail(record)
+            }.onSuccess { detail ->
+                state.update {
+                    it.copy(
+                        scanner = it.scanner.copy(
+                            selectedHistoryRecord = detail.record,
+                            selectedHistoryDetail = detail,
+                            isHistoryDetailLoading = false,
+                            historyDetailError = null,
+                        ),
+                    )
+                }
+            }.onFailure { throwable ->
+                state.update {
+                    it.copy(
+                        scanner = it.scanner.copy(
+                            selectedHistoryRecord = record,
+                            selectedHistoryDetail = null,
+                            isHistoryDetailLoading = false,
+                            historyDetailError = throwable.message ?: currentLanguage().pick(
+                                "Unable to load the full scanner detail.",
+                                "无法加载完整扫码详情。",
+                            ),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun dismissScannerHistoryDetail() {
+        state.update {
+            it.copy(
+                scanner = it.scanner.copy(
+                    selectedHistoryRecord = null,
+                    selectedHistoryDetail = null,
+                    isHistoryDetailLoading = false,
+                    historyDetailError = null,
                 ),
             )
         }
@@ -336,6 +396,10 @@ internal class ScannerWorkflowController(
                         "Verifying barcode...",
                         "正在比对序列号...",
                     ),
+                    selectedHistoryRecord = null,
+                    selectedHistoryDetail = null,
+                    isHistoryDetailLoading = false,
+                    historyDetailError = null,
                 ),
             )
         }
@@ -367,10 +431,14 @@ internal class ScannerWorkflowController(
                     )
                 },
             )
-            repository.recordScannerScan(record, lookupResult)
-            val updatedHistory = listOf(record) + state.value.scanner.history
-                .filterNot { it.scannedBarcode == record.scannedBarcode && it.scannedAt == record.scannedAt }
-                .take(59)
+            val localLogId = repository.recordScannerScan(record, lookupResult)
+            val persistedRecord = record.copy(localLogId = localLogId)
+            val updatedHistory = listOf(persistedRecord) + state.value.scanner.history
+                .filterNot {
+                    it.scannedBarcode == persistedRecord.scannedBarcode &&
+                        it.scannedAt == persistedRecord.scannedAt
+                }
+                .take(MAX_SCANNER_HISTORY_ITEMS - 1)
             preferencesRepository.setScannerHistory(updatedHistory)
             val syncStatus = repository.getScannerSyncStatus(
                 lastReferenceSyncAt = lastReferenceSyncAt,
@@ -388,10 +456,10 @@ internal class ScannerWorkflowController(
                     scanner = it.scanner.copy(
                         barcodeInput = "",
                         isProcessing = false,
-                        lastResult = record.matchStatus,
-                        statusMessage = scannerMessageFor(record, it.appLanguage),
+                        lastResult = persistedRecord.matchStatus,
+                        statusMessage = scannerMessageFor(persistedRecord, it.appLanguage),
                         history = updatedHistory,
-                        lastProcessedBarcode = record.scannedBarcode,
+                        lastProcessedBarcode = persistedRecord.scannedBarcode,
                         lastLookupResult = lookupResult,
                         feedbackNonce = it.scanner.feedbackNonce + 1,
                         sync = it.scanner.sync.copy(
@@ -565,12 +633,25 @@ internal class ScannerWorkflowController(
             barcode = latestBarcode,
             lookupResult = refreshedLookup,
             scannedAt = latestRecord.scannedAt,
-        )
+        ).copy(localLogId = latestRecord.localLogId)
         val updatedHistory = listOf(refreshedRecord) + scannerSnapshot.history.drop(1)
         preferencesRepository.setScannerHistory(updatedHistory)
 
         state.update {
             val isWaitingState = !it.scanner.isProcessing && it.scanner.lastResult == ScannerMatchStatus.WAITING
+            val refreshedSelectedRecord = it.scanner.selectedHistoryRecord?.takeIf { selected ->
+                selected.localLogId == refreshedRecord.localLogId ||
+                    (selected.scannedBarcode == refreshedRecord.scannedBarcode &&
+                        selected.scannedAt == refreshedRecord.scannedAt)
+            }?.let { refreshedRecord }
+            val refreshedSelectedDetail = it.scanner.selectedHistoryDetail?.takeIf { detail ->
+                detail.record.localLogId == refreshedRecord.localLogId ||
+                    (detail.record.scannedBarcode == refreshedRecord.scannedBarcode &&
+                        detail.record.scannedAt == refreshedRecord.scannedAt)
+            }?.copy(
+                record = refreshedRecord,
+                lookupSnapshot = refreshedLookup,
+            )
             it.copy(
                 scanner = it.scanner.copy(
                     history = updatedHistory,
@@ -582,10 +663,16 @@ internal class ScannerWorkflowController(
                     },
                     lastLookupResult = refreshedLookup,
                     lastProcessedBarcode = refreshedRecord.scannedBarcode,
+                    selectedHistoryRecord = refreshedSelectedRecord ?: it.scanner.selectedHistoryRecord,
+                    selectedHistoryDetail = refreshedSelectedDetail ?: it.scanner.selectedHistoryDetail,
                 ),
             )
         }
     }
 
     private fun currentLanguage(): AppLanguage = state.value.appLanguage
+
+    private companion object {
+        const val MAX_SCANNER_HISTORY_ITEMS = 60
+    }
 }

@@ -81,8 +81,29 @@ data class ScannerRecord(
     val status: String,
     val source: String,
     val scannedAt: Long,
+    val localLogId: Long? = null,
     val customersStatus: String? = null,
     val mpiStatus: String? = null,
+    val lookupSnapshot: BarcodeLookupResult? = null,
+)
+
+data class ScannerRecordAudit(
+    val localLogId: Long,
+    val cargoTrackingId: Long? = null,
+    val syncState: String = "PENDING",
+    val dispositionState: String = "ACTIVE",
+    val uploadedBatchId: Long? = null,
+    val uploadedAt: Long? = null,
+    val reconciledAt: Long? = null,
+    val reconciledByLocalId: Long? = null,
+    val reconciliationReason: String? = null,
+    val resolvedCargoTrackingId: Long? = null,
+)
+
+data class ScannerRecordDetail(
+    val record: ScannerRecord,
+    val lookupSnapshot: BarcodeLookupResult? = null,
+    val audit: ScannerRecordAudit? = null,
 )
 
 data class ScannerSyncSettings(

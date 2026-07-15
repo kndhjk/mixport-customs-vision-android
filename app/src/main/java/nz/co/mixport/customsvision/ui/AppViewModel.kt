@@ -24,6 +24,7 @@ import nz.co.mixport.customsvision.data.InspectionSessionRecord
 import nz.co.mixport.customsvision.data.PalletDetail
 import nz.co.mixport.customsvision.data.PilotRepository
 import nz.co.mixport.customsvision.data.ScannerMatchStatus
+import nz.co.mixport.customsvision.data.ScannerRecordDetail
 import nz.co.mixport.customsvision.data.ScannerRecord
 import nz.co.mixport.customsvision.data.SessionDraft
 import nz.co.mixport.customsvision.domain.PalletWorkflowReducer
@@ -68,6 +69,10 @@ data class ScannerUiState(
     val history: List<ScannerRecord> = emptyList(),
     val lastProcessedBarcode: String? = null,
     val lastLookupResult: BarcodeLookupResult? = null,
+    val selectedHistoryRecord: ScannerRecord? = null,
+    val selectedHistoryDetail: ScannerRecordDetail? = null,
+    val isHistoryDetailLoading: Boolean = false,
+    val historyDetailError: String? = null,
     val feedbackNonce: Long = 0L,
     val sync: ScannerSyncUiState = ScannerSyncUiState(),
 ) {
@@ -281,6 +286,14 @@ class AppViewModel(
 
     fun prepareScannerForNextScan() {
         scannerWorkflowController.prepareScannerForNextScan()
+    }
+
+    fun showScannerHistoryDetail(record: ScannerRecord) {
+        scannerWorkflowController.showScannerHistoryDetail(record)
+    }
+
+    fun dismissScannerHistoryDetail() {
+        scannerWorkflowController.dismissScannerHistoryDetail()
     }
 
     fun refreshScannerReferences(

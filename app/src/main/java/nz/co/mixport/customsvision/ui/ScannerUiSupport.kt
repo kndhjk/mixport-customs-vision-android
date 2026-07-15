@@ -44,6 +44,7 @@ internal fun buildScannerRecord(
                 scannedAt = scannedAt,
                 customersStatus = lookupResult.customersStatus,
                 mpiStatus = lookupResult.mpiStatus,
+                lookupSnapshot = lookupResult,
             )
         }
 

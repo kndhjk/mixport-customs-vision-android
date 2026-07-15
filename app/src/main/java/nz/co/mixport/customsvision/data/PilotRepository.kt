@@ -120,7 +120,7 @@ class PilotRepository(
     suspend fun recordScannerScan(
         record: ScannerRecord,
         lookupResult: BarcodeLookupResult?,
-    ) = withContext(Dispatchers.IO) {
+    ): Long = withContext(Dispatchers.IO) {
         val localId = databaseHelper.recordScannerScan(record, lookupResult)
         if (record.matchStatus == ScannerMatchStatus.MATCHED) {
             databaseHelper.reconcileScannerFailuresForMatchedBarcode(
@@ -131,6 +131,24 @@ class PilotRepository(
                 reason = "resolved_by_successful_rescan",
             )
         }
+        localId
+    }
+
+    suspend fun getScannerRecordDetail(record: ScannerRecord): ScannerRecordDetail = withContext(Dispatchers.IO) {
+        val audit = databaseHelper.getScannerRecordAudit(
+            localLogId = record.localLogId,
+            scannedBarcode = record.scannedBarcode,
+            scannedAt = record.scannedAt,
+        )
+        val lookupSnapshot = record.lookupSnapshot ?: databaseHelper.lookupBarcode(record.scannedBarcode)
+        ScannerRecordDetail(
+            record = record.copy(
+                localLogId = record.localLogId ?: audit?.localLogId,
+                lookupSnapshot = lookupSnapshot,
+            ),
+            lookupSnapshot = lookupSnapshot,
+            audit = audit,
+        )
     }
 
     suspend fun refreshScannerReferences(

@@ -70,8 +70,12 @@ class AppPreferencesRepository(context: Context) {
                             status = item.optString("status"),
                             source = item.optString("source"),
                             scannedAt = item.optLong("scannedAt"),
+                            localLogId = item.optLong("localLogId").takeIf { it > 0L },
                             customersStatus = item.optString("customersStatus").ifBlank { null },
                             mpiStatus = item.optString("mpiStatus").ifBlank { null },
+                            lookupSnapshot = item.optJSONObject("lookupSnapshot")
+                                ?.takeIf { snapshot -> snapshot.length() > 0 }
+                                ?.toBarcodeLookupResult(),
                         ),
                     )
                 }
@@ -90,8 +94,10 @@ class AppPreferencesRepository(context: Context) {
                     put("status", record.status)
                     put("source", record.source)
                     put("scannedAt", record.scannedAt)
+                    put("localLogId", record.localLogId)
                     put("customersStatus", record.customersStatus)
                     put("mpiStatus", record.mpiStatus)
+                    put("lookupSnapshot", record.lookupSnapshot?.toJsonObject())
                 },
             )
         }
@@ -216,4 +222,97 @@ class AppPreferencesRepository(context: Context) {
         private const val KEY_SCANNER_LAST_PROVISIONED_DEVICE_ID = "scanner_last_provisioned_device_id"
         private const val KEY_SCANNER_LAST_PROVISIONED_AT = "scanner_last_provisioned_at"
     }
+}
+
+private fun BarcodeLookupResult.toJsonObject(): JSONObject {
+    return JSONObject().apply {
+        put("found", found)
+        put("databaseRecord", databaseRecord)
+        put("status", status)
+        put("source", source)
+        put("cargoTrackingId", cargoTrackingId)
+        put("parentHblNo", parentHblNo)
+        put("matchedChildHbl", matchedChildHbl)
+        put("matchedBarcodeCode", matchedBarcodeCode)
+        put("matchedBy", matchedBy)
+        put("childHbls", childHbls)
+        put("barcodeCodes", barcodeCodes)
+        put("containerNo", containerNo)
+        put("vesselName", vesselName)
+        put("company", company)
+        put("customerName", customerName)
+        put("location", location)
+        put("pkgs", pkgs)
+        put("outTurnQty", outTurnQty)
+        put("submissionDate", submissionDate)
+        put("customersStatus", customersStatus)
+        put("mpiStatus", mpiStatus)
+        put("serverScanCount", serverScanCount)
+        put("serverMatchedScanCount", serverMatchedScanCount)
+        put("serverMismatchScanCount", serverMismatchScanCount)
+        put("serverErrorScanCount", serverErrorScanCount)
+        put("serverLastScannedAt", serverLastScannedAt)
+        put("serverLastMatchStatus", serverLastMatchStatus)
+        put("scannerTargetMode", scannerTargetMode)
+        put("scannerExpectedScanCount", scannerExpectedScanCount)
+        put("scannerCompletedScanCount", scannerCompletedScanCount)
+        put("scannerRemainingScanCount", scannerRemainingScanCount)
+        put("scannerRepeatMatchCount", scannerRepeatMatchCount)
+        put("scannerIsComplete", scannerIsComplete)
+        put("containerScanCount", containerScanCount)
+        put("containerMatchedScanCount", containerMatchedScanCount)
+        put("containerRowCount", containerRowCount)
+        put("containerMatchedRowCount", containerMatchedRowCount)
+    }
+}
+
+private fun JSONObject.toBarcodeLookupResult(): BarcodeLookupResult {
+    return BarcodeLookupResult(
+        found = optBoolean("found", false),
+        databaseRecord = optString("databaseRecord"),
+        status = optString("status"),
+        source = optString("source"),
+        cargoTrackingId = optLong("cargoTrackingId").takeIf { it > 0L },
+        parentHblNo = optString("parentHblNo").ifBlank { null },
+        matchedChildHbl = optString("matchedChildHbl").ifBlank { null },
+        matchedBarcodeCode = optString("matchedBarcodeCode").ifBlank { null },
+        matchedBy = optString("matchedBy").ifBlank { null },
+        childHbls = optString("childHbls").ifBlank { null },
+        barcodeCodes = optString("barcodeCodes").ifBlank { null },
+        containerNo = optString("containerNo").ifBlank { null },
+        vesselName = optString("vesselName").ifBlank { null },
+        company = optString("company").ifBlank { null },
+        customerName = optString("customerName").ifBlank { null },
+        location = optString("location").ifBlank { null },
+        pkgs = optInt("pkgs").takeIf { has("pkgs") && !isNull("pkgs") },
+        outTurnQty = optInt("outTurnQty").takeIf { has("outTurnQty") && !isNull("outTurnQty") },
+        submissionDate = optString("submissionDate").ifBlank { null },
+        customersStatus = optString("customersStatus").ifBlank { null },
+        mpiStatus = optString("mpiStatus").ifBlank { null },
+        serverScanCount = optInt("serverScanCount", 0),
+        serverMatchedScanCount = optInt("serverMatchedScanCount", 0),
+        serverMismatchScanCount = optInt("serverMismatchScanCount", 0),
+        serverErrorScanCount = optInt("serverErrorScanCount", 0),
+        serverLastScannedAt = optString("serverLastScannedAt").ifBlank { null },
+        serverLastMatchStatus = optString("serverLastMatchStatus").ifBlank { null },
+        scannerTargetMode = optString("scannerTargetMode").ifBlank { null },
+        scannerExpectedScanCount = optInt("scannerExpectedScanCount")
+            .takeIf { has("scannerExpectedScanCount") && !isNull("scannerExpectedScanCount") },
+        scannerCompletedScanCount = optInt("scannerCompletedScanCount")
+            .takeIf { has("scannerCompletedScanCount") && !isNull("scannerCompletedScanCount") },
+        scannerRemainingScanCount = optInt("scannerRemainingScanCount")
+            .takeIf { has("scannerRemainingScanCount") && !isNull("scannerRemainingScanCount") },
+        scannerRepeatMatchCount = optInt("scannerRepeatMatchCount")
+            .takeIf { has("scannerRepeatMatchCount") && !isNull("scannerRepeatMatchCount") },
+        scannerIsComplete = optBoolean("scannerIsComplete")
+            .takeIf { has("scannerIsComplete") && !isNull("scannerIsComplete") },
+        containerScanCount = optInt("containerScanCount")
+            .takeIf { has("containerScanCount") && !isNull("containerScanCount") },
+        containerMatchedScanCount = optInt("containerMatchedScanCount")
+            .takeIf { has("containerMatchedScanCount") && !isNull("containerMatchedScanCount") },
+        containerRowCount = optInt("containerRowCount")
+            .takeIf { has("containerRowCount") && !isNull("containerRowCount") },
+        containerMatchedRowCount = optInt("containerMatchedRowCount")
+            .takeIf { has("containerMatchedRowCount") && !isNull("containerMatchedRowCount") },
+    )
 }
