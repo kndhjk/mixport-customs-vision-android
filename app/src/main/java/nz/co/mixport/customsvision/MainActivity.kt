@@ -1,6 +1,11 @@
 package nz.co.mixport.customsvision
 
+import android.content.Context
 import android.content.Intent
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
+import android.graphics.drawable.Icon
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
@@ -50,6 +55,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Log.i(STARTUP_TAG, "MainActivity.onCreate start at ${SystemClock.elapsedRealtime()} ms")
         enableEdgeToEdge()
+        maybePinAppToHomeScreen()
 
         val app = application as CustomsApplication
 
@@ -86,6 +92,77 @@ class MainActivity : ComponentActivity() {
             return true
         }
         return super.onKeyUp(keyCode, event)
+    }
+
+    private fun maybePinAppToHomeScreen() {
+        val preferences = getSharedPreferences(HOME_SHORTCUT_PREFS, Context.MODE_PRIVATE)
+        if (preferences.getBoolean(KEY_HOME_SHORTCUT_REQUESTED, false)) {
+            return
+        }
+
+        val launchIntent = Intent(this, MainActivity::class.java).apply {
+            action = Intent.ACTION_MAIN
+            addCategory(Intent.CATEGORY_LAUNCHER)
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP,
+            )
+        }
+
+        val requested = when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> requestPinnedShortcut(launchIntent)
+            else -> sendLegacyInstallShortcutBroadcast(launchIntent)
+        }
+        if (requested) {
+            preferences.edit().putBoolean(KEY_HOME_SHORTCUT_REQUESTED, true).apply()
+        }
+    }
+
+    private fun requestPinnedShortcut(launchIntent: Intent): Boolean {
+        val shortcutManager = getSystemService(ShortcutManager::class.java) ?: return false
+        if (!shortcutManager.isRequestPinShortcutSupported) {
+            return sendLegacyInstallShortcutBroadcast(launchIntent)
+        }
+        val shortcut = ShortcutInfo.Builder(this, HOME_SHORTCUT_ID)
+            .setShortLabel(getString(R.string.app_name))
+            .setLongLabel(getString(R.string.app_name))
+            .setIcon(Icon.createWithResource(this, R.mipmap.ic_launcher))
+            .setIntent(launchIntent)
+            .build()
+        return runCatching {
+            shortcutManager.requestPinShortcut(shortcut, null)
+        }.getOrElse { throwable ->
+            Log.w(STARTUP_TAG, "Unable to request pinned launcher shortcut", throwable)
+            false
+        }.let { requested ->
+            if (requested) {
+                true
+            } else {
+                Log.i(STARTUP_TAG, "ShortcutManager requestPinShortcut returned false, falling back to legacy broadcast")
+                sendLegacyInstallShortcutBroadcast(launchIntent)
+            }
+        }
+    }
+
+    private fun sendLegacyInstallShortcutBroadcast(launchIntent: Intent): Boolean {
+        return runCatching {
+            sendBroadcast(
+                Intent("com.android.launcher.action.INSTALL_SHORTCUT").apply {
+                    putExtra(Intent.EXTRA_SHORTCUT_NAME, getString(R.string.app_name))
+                    putExtra(Intent.EXTRA_SHORTCUT_INTENT, launchIntent)
+                    putExtra("duplicate", false)
+                    putExtra(
+                        Intent.EXTRA_SHORTCUT_ICON_RESOURCE,
+                        Intent.ShortcutIconResource.fromContext(this@MainActivity, R.mipmap.ic_launcher),
+                    )
+                },
+            )
+            true
+        }.getOrElse { throwable ->
+            Log.w(STARTUP_TAG, "Unable to send legacy launcher shortcut broadcast", throwable)
+            false
+        }
     }
 }
 
@@ -156,6 +233,9 @@ private fun MainActivityContent(app: CustomsApplication) {
 }
 
 private const val STARTUP_TAG = "MixportStartup"
+private const val HOME_SHORTCUT_PREFS = "mixport_home_shortcut"
+private const val KEY_HOME_SHORTCUT_REQUESTED = "home_shortcut_requested"
+private const val HOME_SHORTCUT_ID = "mixport_customs_home"
 
 @Composable
 private fun StartupLoadingScreen(language: AppLanguage) {
