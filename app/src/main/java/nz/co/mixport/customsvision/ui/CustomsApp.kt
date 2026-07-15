@@ -66,8 +66,10 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.Observer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import nz.co.mixport.customsvision.R
 import nz.co.mixport.customsvision.camera.InspectionCameraController
@@ -92,8 +94,8 @@ private val OverlayScrim = Color(0x22000000)
 private val BrandGradientStart = Color(0xFFF45D22)
 private val BrandGradientEnd = Color(0xFFD94D1A)
 private val BrandTint = Color(0xFFFFF3EB)
-private const val ScannerAutoRefreshIntervalMs = 120_000L
-private const val ScannerAutoUploadRetryIntervalMs = 15_000L
+private const val ScannerAutoRefreshIntervalMs = 15_000L
+private const val ScannerAutoUploadRetryIntervalMs = 5_000L
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -101,6 +103,7 @@ fun CustomsApp(viewModel: AppViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val language = uiState.appLanguage
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -122,31 +125,39 @@ fun CustomsApp(viewModel: AppViewModel) {
     }
 
     LaunchedEffect(
-        uiState.selectedDestination,
+        lifecycleOwner,
         uiState.scanner.sync.isProvisioned,
         uiState.scanner.sync.deviceId,
     ) {
-        if (uiState.selectedDestination != AppDestination.SCANNER || !uiState.scanner.sync.isConfigured) {
+        if (!uiState.scanner.sync.isConfigured) {
             return@LaunchedEffect
         }
-        while (true) {
-            delay(ScannerAutoRefreshIntervalMs)
-            viewModel.refreshScannerReferences(manual = false)
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            viewModel.refreshScannerConnectionState()
+            viewModel.refreshScannerReferences(manual = false, force = true)
+            while (true) {
+                delay(ScannerAutoRefreshIntervalMs)
+                viewModel.refreshScannerReferences(manual = false)
+            }
         }
     }
 
     LaunchedEffect(
-        uiState.selectedDestination,
+        lifecycleOwner,
         uiState.scanner.sync.isProvisioned,
         uiState.scanner.sync.deviceId,
     ) {
-        if (uiState.selectedDestination != AppDestination.SCANNER || !uiState.scanner.sync.isConfigured) {
+        if (!uiState.scanner.sync.isConfigured) {
             return@LaunchedEffect
         }
-        viewModel.refreshScannerConnectionState()
-        while (true) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            viewModel.refreshScannerConnectionState()
             viewModel.maybeAutoUploadPendingScannerScans()
-            delay(ScannerAutoUploadRetryIntervalMs)
+            while (true) {
+                delay(ScannerAutoUploadRetryIntervalMs)
+                viewModel.refreshScannerConnectionState()
+                viewModel.maybeAutoUploadPendingScannerScans()
+            }
         }
     }
 
@@ -261,12 +272,9 @@ fun CustomsApp(viewModel: AppViewModel) {
                 onScannerVerify = viewModel::verifyScannerBarcode,
                 onScannerAwaitingNextScan = viewModel::prepareScannerForNextScan,
                 onScannerPdaDetected = viewModel::onScannerPdaDetected,
-                onScannerSoundChanged = viewModel::setScannerSoundEnabled,
                 onScannerWorkflowModeChanged = viewModel::setScannerWorkflowMode,
                 onScannerHistoryCleared = viewModel::clearScannerHistory,
                 onScannerOnboardingDismissed = viewModel::dismissScannerOnboarding,
-                onScannerRefreshReferences = viewModel::refreshScannerReferences,
-                onScannerUploadPending = viewModel::uploadPendingScannerScans,
             )
 
             AppDestination.HISTORY -> HistoryScreen(

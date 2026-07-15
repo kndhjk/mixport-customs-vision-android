@@ -19,12 +19,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -75,12 +73,9 @@ fun ScannerScreen(
     onScannerVerify: (String) -> Unit,
     onScannerAwaitingNextScan: () -> Unit,
     onScannerPdaDetected: (String, String) -> Unit,
-    onScannerSoundChanged: (Boolean) -> Unit,
     onScannerWorkflowModeChanged: (PdaScanWorkflowMode) -> Unit,
     onScannerHistoryCleared: () -> Unit,
     onScannerOnboardingDismissed: () -> Unit,
-    onScannerRefreshReferences: (Boolean) -> Unit,
-    onScannerUploadPending: () -> Unit,
 ) {
     val language = uiState.appLanguage
     val scanner = uiState.scanner
@@ -116,14 +111,14 @@ fun ScannerScreen(
         pdaScanController.stopScan()
             .onFailure { throwable ->
                 pdaStatusMessage = throwable.message ?: currentLanguage.pick(
-                    "Unable to stop the FDA trigger.",
+                    "Unable to stop scanning.",
                     "无法停止 FDA 触发。",
                 )
             }
             .onSuccess {
                 if (updateStatus) {
                     pdaStatusMessage = currentLanguage.pick(
-                        "Manual trigger released. Scanner is waiting for the next key press.",
+                        "Scan stopped. The scanner is waiting for the next key press.",
                         "手动触发已停止，等待下一次按键扫描。",
                     )
                 }
@@ -137,7 +132,7 @@ fun ScannerScreen(
                 isPdaBridgeReady = true
                 if (showHint) {
                     pdaStatusMessage = currentLanguage.pick(
-                        "Manual scan trigger sent. Tap once for one read, or hold the side key to keep scanning.",
+                        "Scan started. Tap once for one read, or hold the side key to keep scanning.",
                         "已发送手动扫描触发。按一下扫一次，按住侧键可持续扫描。",
                     )
                 }
@@ -145,7 +140,7 @@ fun ScannerScreen(
             .onFailure { throwable ->
                 isPdaBridgeReady = false
                 pdaStatusMessage = throwable.message ?: currentLanguage.pick(
-                    "Unable to trigger the FDA scanner.",
+                    "Unable to start scanning.",
                     "无法触发 FDA 扫码。",
                 )
             }
@@ -184,8 +179,8 @@ fun ScannerScreen(
         if (!isPdaServiceInstalled) {
             isPdaBridgeReady = false
             pdaStatusMessage = currentLanguage.pick(
-                "Hikrobot PDA service is missing on this device.",
-                "当前设备缺少 Hikrobot PDA 服务。",
+                "Scanner service is unavailable on this device.",
+                "当前设备的扫码服务不可用。",
             )
             return@LaunchedEffect
         }
@@ -195,8 +190,8 @@ fun ScannerScreen(
             workflowMode = PdaScanWorkflowMode.TRIGGER_ONCE,
             onReady = {
                 pdaStatusMessage = currentLanguage.pick(
-                    "FDA scanner bridge ready. Manual trigger mode is loading...",
-                    "FDA 扫码桥已就绪，正在切到手动触发模式...",
+                    "Scanner connected. Preparing side-key scanning...",
+                    "扫码器已连接，正在准备侧键扫描...",
                 )
             },
             onBarcodeDetected = { barcode, codeType ->
@@ -224,15 +219,15 @@ fun ScannerScreen(
             .onSuccess {
                 isPdaBridgeReady = true
                 pdaStatusMessage = currentLanguage.pick(
-                    "Manual FDA mode is ready. Use the side scan keys or tap Trigger once.",
-                    "手动 FDA 模式已就绪。使用机身扫码键，或点击“触发一次”。",
+                    "Scanner is ready. Use the side scan key.",
+                    "扫码器已就绪，请使用机身侧边扫码键。",
                 )
             }
             .onFailure { throwable ->
                 isPdaBridgeReady = false
                 pdaStatusMessage = throwable.message ?: currentLanguage.pick(
-                    "Unable to arm manual FDA mode.",
-                    "无法启用手动 FDA 模式。",
+                    "Unable to prepare the scanner.",
+                    "无法准备扫码器。",
                 )
             }
     }
@@ -240,8 +235,8 @@ fun ScannerScreen(
     LaunchedEffect(language) {
         pdaStatusMessage = when {
             !isPdaServiceInstalled -> language.pick(
-                "Hikrobot PDA service is missing on this device.",
-                "当前设备缺少 Hikrobot PDA 服务。",
+                "Scanner service is unavailable on this device.",
+                "当前设备的扫码服务不可用。",
             )
 
             activeHardwareKey != null -> language.pick(
@@ -250,13 +245,13 @@ fun ScannerScreen(
             )
 
             isPdaBridgeReady -> language.pick(
-                "Manual FDA mode is ready. Use the side scan keys or tap Trigger once.",
-                "手动 FDA 模式已就绪。使用机身扫码键，或点击“触发一次”。",
+                "Scanner is ready. Use the side scan key.",
+                "扫码器已就绪，请使用机身侧边扫码键。",
             )
 
             else -> language.pick(
-                "Connecting to the Hikrobot PDA service...",
-                "正在连接 Hikrobot PDA 服务...",
+                "Connecting to the scanner service...",
+                "正在连接扫码服务...",
             )
         }
     }
@@ -337,50 +332,6 @@ fun ScannerScreen(
                 statusMessage = pdaStatusMessage,
                 isPdaServiceInstalled = isPdaServiceInstalled,
                 isPdaBridgeReady = isPdaBridgeReady,
-            )
-        }
-        item {
-            ScannerSyncCard(
-                language = language,
-                scanner = scanner,
-                onRefreshReferences = { onScannerRefreshReferences(true) },
-                onUploadPending = onScannerUploadPending,
-            )
-        }
-        item {
-            ScannerTriggerCard(
-                language = language,
-                scanner = scanner,
-                isPdaServiceInstalled = isPdaServiceInstalled,
-                isPdaBridgeReady = isPdaBridgeReady,
-                isHardwareKeyActive = activeHardwareKey != null,
-                onTriggerOnce = {
-                    triggerManualScan(showHint = true)
-                    coroutineScope.launch {
-                        delay(SINGLE_TRIGGER_LIGHT_OFF_DELAY_MS)
-                        if (activeHardwareKey == null) {
-                            pdaScanController.stopScan()
-                        }
-                    }
-                },
-                onRefresh = {
-                    pdaScanController.reconfigure(PdaScanWorkflowMode.TRIGGER_ONCE)
-                        .onSuccess {
-                            isPdaBridgeReady = true
-                            pdaStatusMessage = language.pick(
-                                "Scanner settings refreshed. Manual trigger mode is ready.",
-                                "扫码配置已刷新，手动触发模式已就绪。",
-                            )
-                        }
-                        .onFailure { throwable ->
-                            isPdaBridgeReady = false
-                            pdaStatusMessage = throwable.message ?: language.pick(
-                                "Unable to refresh the scanner.",
-                                "无法刷新扫码配置。",
-                            )
-                        }
-                },
-                onSoundChanged = onScannerSoundChanged,
             )
         }
         item {
@@ -471,6 +422,51 @@ private fun ScannerResultCard(
             add(language.pick("Location $it", "\u5e93\u4f4d $it"))
         }
     }.joinToString(" | ").ifBlank { null }
+    val liveProgressLine = liveLookup?.let { lookup ->
+        val expected = lookup.scannerExpectedScanCount ?: 0
+        val completed = lookup.scannerCompletedScanCount ?: 0
+        val remaining = lookup.scannerRemainingScanCount ?: 0
+        val progressLabel = when (lookup.scannerTargetMode?.trim()?.lowercase()) {
+            "child_hbls" -> language.pick("Scan HBLs", "Scan HBLs")
+            "pkgs" -> language.pick("Packages", "\u4ef6\u6570")
+            else -> language.pick("This cargo", "\u672c\u7968")
+        }
+        buildList {
+            if (expected > 0) {
+                add("$progressLabel $completed/$expected")
+                add(language.pick("Remaining $remaining", "\u5269\u4f59 $remaining"))
+            } else if (lookup.serverScanCount > 0) {
+                add(language.pick("Scans ${lookup.serverScanCount}", "\u7d2f\u8ba1\u626b\u63cf ${lookup.serverScanCount} \u6b21"))
+            }
+            lookup.scannerRepeatMatchCount?.takeIf { it > 0 }?.let { repeats ->
+                add(language.pick("Repeat matches $repeats", "\u91cd\u590d\u547d\u4e2d $repeats \u6b21"))
+            }
+        }.joinToString(" | ").ifBlank { null }
+    }
+    val liveCountLine = liveLookup?.let { lookup ->
+        buildList {
+            if (lookup.serverScanCount > 0) {
+                add(language.pick("This record scans ${lookup.serverScanCount}", "\u672c\u7968\u7d2f\u8ba1\u626b\u63cf ${lookup.serverScanCount} \u6b21"))
+            }
+            lookup.containerScanCount?.let { containerScans ->
+                val rowCount = lookup.containerRowCount
+                val matchedRowCount = lookup.containerMatchedRowCount
+                add(
+                    if (rowCount != null && rowCount > 0 && matchedRowCount != null) {
+                        language.pick(
+                            "Container scans $containerScans | Rows $matchedRowCount/$rowCount",
+                            "\u672c\u67dc\u626b\u63cf $containerScans \u6b21 | \u5df2\u626b\u884c $matchedRowCount/$rowCount",
+                        )
+                    } else {
+                        language.pick(
+                            "Container scans $containerScans",
+                            "\u672c\u67dc\u626b\u63cf $containerScans \u6b21",
+                        )
+                    }
+                )
+            }
+        }.joinToString(" | ").ifBlank { null }
+    }
     val resultMessage = when {
         scanner.isProcessing || !isWaitingState -> scanner.statusMessage ?: statusMessage
         else -> statusMessage ?: scanner.statusMessage
@@ -527,8 +523,8 @@ private fun ScannerResultCard(
                     label = {
                         Text(
                             text = when {
-                                !isPdaServiceInstalled -> language.pick("Service missing", "\u670d\u52a1\u7f3a\u5931")
-                                isPdaBridgeReady -> language.pick("Manual ready", "\u624b\u52a8\u5c31\u7eea")
+                                !isPdaServiceInstalled -> language.pick("Scanner unavailable", "\u626b\u7801\u4e0d\u53ef\u7528")
+                                isPdaBridgeReady -> language.pick("Ready", "\u5c31\u7eea")
                                 else -> language.pick("Connecting", "\u8fde\u63a5\u4e2d")
                             },
                         )
@@ -642,6 +638,18 @@ private fun ScannerResultCard(
                             value = quantityLine,
                         )
                     }
+                    liveProgressLine?.let { progressLine ->
+                        ScannerDetailRow(
+                            label = language.pick("Scan progress", "\u626b\u7801\u8fdb\u5ea6"),
+                            value = progressLine,
+                        )
+                    }
+                    liveCountLine?.let { countLine ->
+                        ScannerDetailRow(
+                            label = language.pick("Scan totals", "\u626b\u7801\u603b\u8ba1"),
+                            value = countLine,
+                        )
+                    }
                     ScannerDetailRow(
                         label = language.pick("Source", "\u6765\u6e90"),
                         value = liveSource ?: language.pick("Local scanner flow", "\u672c\u5730\u626b\u7801\u6d41\u7a0b"),
@@ -653,269 +661,6 @@ private fun ScannerResultCard(
                         )
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ScannerSyncCard(
-    language: AppLanguage,
-    scanner: ScannerUiState,
-    onRefreshReferences: () -> Unit,
-    onUploadPending: () -> Unit,
-) {
-    val sync = scanner.sync
-    ElevatedCard {
-        Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Text(
-                text = language.pick("Server Sync", "服务器同步"),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = language.pick(
-                    "Refresh the private scanner cache when this build has been provisioned. Online scans upload automatically, while offline scans stay queued locally.",
-                    "当当前构建已预置私有同步配置时，可刷新扫码缓存；有网络时扫码会自动上传，无网络时则保留在本地队列。",
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ScannerMiniStat(
-                    label = language.pick("Cache", "缓存"),
-                    value = sync.referenceCount.toString(),
-                    color = if (sync.referenceCount > 0) ScannerOk else ScannerWarn,
-                )
-                ScannerMiniStat(
-                    label = language.pick("Pending", "待上传"),
-                    value = sync.pendingUploadCount.toString(),
-                    color = if (sync.pendingUploadCount > 0) ScannerWarn else ScannerIdle,
-                )
-                ScannerMiniStat(
-                    label = language.pick("Link", "网络"),
-                    value = when (sync.networkAvailable) {
-                        true -> language.pick("Online", "在线")
-                        false -> language.pick("Offline", "离线")
-                        null -> language.pick("Profile", "配置")
-                    },
-                    color = when (sync.networkAvailable) {
-                        true -> ScannerOk
-                        false -> ScannerWarn
-                        null -> ScannerIdle
-                    },
-                )
-            }
-
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = ScannerPanelTint,
-                ),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        text = language.pick("Private sync profile", "私有同步配置"),
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = if (sync.isConfigured) {
-                            language.pick(
-                                "This device has a secure sync profile. Endpoint and token values stay outside the operator UI and are not compiled into the public repository build.",
-                                "当前设备已完成安全同步配置，地址和令牌不会出现在工作人员界面，也不会编译进公开仓库构建。",
-                            )
-                        } else {
-                            language.pick(
-                                "This build is waiting for a secure device profile before live sync can start.",
-                                "当前构建仍在等待安全设备配置，完成前不会启用在线同步。",
-                            )
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            ScannerDetailRow(
-                label = language.pick("Provisioning", "配置状态"),
-                value = if (sync.isConfigured) {
-                    language.pick("Secure device profile installed", "已安装安全设备配置")
-                } else {
-                    language.pick("Provisioning required", "需要先完成设备配置")
-                },
-            )
-            ScannerDetailRow(
-                label = language.pick("Device ID", "设备 ID"),
-                value = sync.deviceId.ifBlank {
-                    language.pick("Not assigned", "未分配")
-                },
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Button(
-                    onClick = onRefreshReferences,
-                    enabled = sync.isConfigured && !sync.isRefreshing && !sync.isUploading,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(
-                        if (sync.isRefreshing) {
-                            language.pick("Refreshing...", "刷新中...")
-                        } else {
-                            language.pick("Pull latest cache", "拉取最新缓存")
-                        },
-                    )
-                }
-                FilledTonalButton(
-                    onClick = onUploadPending,
-                    enabled = sync.isConfigured && !sync.isRefreshing && !sync.isUploading && sync.pendingUploadCount > 0,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(
-                        if (sync.isUploading) {
-                            language.pick("Uploading...", "上传中...")
-                        } else {
-                            language.pick("Upload pending", "上传待处理")
-                        },
-                    )
-                }
-            }
-
-            sync.statusMessage?.let { message ->
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            val syncTime = sync.lastReferenceSyncAt?.let(::formatTimestamp)
-                ?: language.pick("Not synced yet", "尚未同步")
-            val uploadTime = sync.lastUploadAt?.let(::formatTimestamp)
-                ?: language.pick("No upload yet", "尚未上传")
-            ScannerDetailRow(
-                label = language.pick("Last cache sync", "上次缓存同步"),
-                value = syncTime,
-            )
-            ScannerDetailRow(
-                label = language.pick("Last server upload", "上次服务端上传"),
-                value = if (sync.lastUploadBatchId != null) {
-                    "$uploadTime · #${sync.lastUploadBatchId}"
-                } else {
-                    uploadTime
-                },
-            )
-        }
-    }
-}
-
-@Composable
-private fun ScannerTriggerCard(
-    language: AppLanguage,
-    scanner: ScannerUiState,
-    isPdaServiceInstalled: Boolean,
-    isPdaBridgeReady: Boolean,
-    isHardwareKeyActive: Boolean,
-    onTriggerOnce: () -> Unit,
-    onRefresh: () -> Unit,
-    onSoundChanged: (Boolean) -> Unit,
-) {
-    ElevatedCard {
-        Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Text(
-                text = language.pick("Manual FDA Trigger", "手动 FDA 触发"),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = language.pick(
-                    "The scanner now stays in manual mode only. Tap once for one scan, or hold the side key to keep scanning until release.",
-                    "扫码页现在只保留手动模式。按一下扫一次，按住机身侧键则会持续扫描，松开即停止。",
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ScannerMiniStat(
-                    label = language.pick("Service", "服务"),
-                    value = when {
-                        !isPdaServiceInstalled -> language.pick("Missing", "缺失")
-                        isPdaBridgeReady -> language.pick("Ready", "就绪")
-                        else -> language.pick("Connecting", "连接中")
-                    },
-                    color = if (isPdaBridgeReady) ScannerOk else ScannerWarn,
-                )
-                ScannerMiniStat(
-                    label = language.pick("Trigger", "触发"),
-                    value = if (isHardwareKeyActive) {
-                        language.pick("Holding", "按住中")
-                    } else {
-                        language.pick("Idle", "待命")
-                    },
-                    color = if (isHardwareKeyActive) ScannerOk else ScannerIdle,
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Button(
-                    onClick = onTriggerOnce,
-                    enabled = isPdaServiceInstalled,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(language.pick("Trigger once", "触发一次"))
-                }
-                FilledTonalButton(
-                    onClick = onRefresh,
-                    enabled = isPdaServiceInstalled,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(language.pick("Refresh", "刷新配置"))
-                }
-            }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(ScannerPanelTint)
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = language.pick("Sound prompt", "提示音"),
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = language.pick(
-                            "Matched, mismatch, and empty/error scans use different tones.",
-                            "匹配成功、未匹配、空值或错误会使用不同提示音。",
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(
-                    checked = scanner.isSoundEnabled,
-                    onCheckedChange = onSoundChanged,
-                )
             }
         }
     }

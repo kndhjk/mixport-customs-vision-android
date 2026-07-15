@@ -6,7 +6,7 @@ Android pilot app for Mixport's container unloading workflow. The app combines:
 - front FDA scanner integration for Hikrobot PDA hardware
 - bilingual English / Chinese UI
 - local evidence capture and offline-first session storage
-- server-backed scanner cache sync with manual batch upload
+- server-backed scanner cache sync with immediate online upload and offline queue recovery
 - stale-scan reconciliation so historical mismatches can downgrade into audit-only logs
 
 This repo is for the first pilot company, using the same company server stack later for API sync. The Android client does not connect directly to the production database.
@@ -44,10 +44,12 @@ Live page snapshot on Hikrobot PDA:
   - tap once: one scan
   - hold the key: repeated scan until release
 - shows the scanned serial number and database comparison result at the top of the page
+- shows live scan progress for the matched cargo row, including package / child-HBL completion, repeat scans, and current container scan totals
 - keeps the result card green only when both `NZCS` and `MPI` are `clear`
 - turns the result card red immediately when either `NZCS` or `MPI` is `failed`
 - turns the result card yellow for every remaining matched `hold` combination, including `clear + hold` and `hold + hold`
 - uses different tones for matched, mismatch, and empty/error results
+- keeps worker-facing scanner UI focused on scan result, counts, and history without exposing sync-control or provisioning controls
 - keeps barcode cleanup and clearance-state normalization on a tiny C/JNI bridge with Kotlin fallback, while the heavier package-size win comes from `arm64-v8a`-only release packaging
 
 Scanner page snapshot on Hikrobot PDA:
@@ -193,14 +195,13 @@ GitHub Actions now runs the same public lint, unit-test, and public/field build 
 
 1. Open the `Scanner` page.
 2. Provision a device-specific secure sync profile once, outside the worker UI.
-3. Tap `Pull latest cache` to download the active parent / child HBL scanner dataset into local SQLite.
+3. The device refreshes the active parent / child HBL scanner dataset into local SQLite outside the worker-facing flow.
 4. With the network available, each scan uses live server lookup first; if the server is unreachable, the app falls back to the last synced local cache.
-5. After the scan is written into the local queue, the app attempts immediate upload whenever the device still has network access and a valid sync profile.
-6. The scanner page also runs a lightweight foreground retry loop, so when the Hikrobot device comes back online the pending queue is retried automatically without waiting for the next scan.
-7. If the network is unavailable or the upload call fails, the scan stays in the local pending queue and can still be retried manually via `Upload pending`.
-8. When a barcode later becomes valid, the app automatically reclassifies older local `MISMATCH` / `ERROR` rows for that same code into audit-only history before upload.
-
-Manual upload remains available for offline backlog recovery, but the normal online workflow is now immediate auto-upload per scan with periodic foreground retry while the scanner page stays open.
+5. The scanner result card immediately shows the matched cargo row progress plus container-level scan totals returned by the server.
+6. After the scan is written into the local queue, the app attempts immediate upload whenever the device still has network access and a valid sync profile.
+7. The scanner page also runs a lightweight foreground retry loop, so when the Hikrobot device comes back online the pending queue is retried automatically without waiting for the next scan.
+8. If the network is unavailable or the upload call fails, the scan stays in the local pending queue until connectivity returns.
+9. When a barcode later becomes valid, the app automatically reclassifies older local `MISMATCH` / `ERROR` rows for that same code into audit-only history before upload.
 
 ### Secure provisioning import
 
@@ -238,9 +239,11 @@ The app stores the imported profile locally in encrypted form, refreshes its sta
 ## Problems fixed in this release
 
 - `The server-side row changed, but the PDA still mismatched`: fixed by preferring live verification before local cache and deleting stale cached references when the server says `found=false`.
+- `Workers could not see how many pieces or child HBLs were already scanned`: fixed by returning server-side expected/completed/remaining counters plus per-container scan totals to the PDA result card.
 - `Alias/barcode edits were not reaching devices during incremental sync`: fixed by advancing the bootstrap cursor from the latest `cargo_tracking`, child-HBL alias, and barcode-alias timestamps.
 - `Old failed scans stayed in the business queue after a later successful scan`: fixed with local and server-side reconciliation so the old row becomes audit history instead of dirty operational data.
 - `Manual upload could still over-count outdated failures`: fixed by computing an effective server-side match state and excluding audit-only reconciled rows from operational scan counters.
+- `Dashboard Scan HBL bulk paste could misread spreadsheet punctuation`: fixed by normalizing commas, ideographic commas, and semicolons into one cargo-row value per pasted line on the support/admin dashboards.
 - `Public APKs still carried static sync credentials`: fixed by moving private sync configuration to runtime provisioning backed by Android Keystore instead of `BuildConfig`.
 - `Any app could previously push sync extras through the launcher activity`: fixed by moving provisioning into a dedicated non-exported admin activity with HTTPS + host-allowlist validation before local state is changed.
 - `Public release and company-device rollout previously shared the same attack surface`: fixed by splitting builds into hardened `public` and controlled `field` variants, while keeping the same package/data path for internal upgrades.

@@ -8,7 +8,8 @@ import nz.co.mixport.customsvision.data.ScannerMatchStatus
 import nz.co.mixport.customsvision.data.ScannerRecord
 import nz.co.mixport.customsvision.data.isUsableScannerBarcode
 
-internal const val SCANNER_REFERENCE_REFRESH_INTERVAL_MS = 120_000L
+internal const val SCANNER_REFERENCE_REFRESH_INTERVAL_MS = 15_000L
+internal const val SCANNER_REFERENCE_FORCE_REFRESH_DEBOUNCE_MS = 4_000L
 internal const val SCANNER_SOURCE_LOCAL = "LOCAL"
 internal const val SCANNER_RECORD_NOT_FOUND = "NOT_FOUND"
 internal const val SCANNER_RECORD_ERROR = "ERROR"
@@ -59,6 +60,29 @@ internal fun buildScannerRecord(
     }
 }
 
+internal fun shouldRefreshScannerReferenceCache(
+    isConfigured: Boolean,
+    isRefreshing: Boolean,
+    isUploading: Boolean,
+    referenceCount: Int,
+    lastReferenceSyncAt: Long?,
+    now: Long,
+    force: Boolean = false,
+): Boolean {
+    if (!isConfigured || isRefreshing || isUploading) {
+        return false
+    }
+    if (referenceCount <= 0) {
+        return true
+    }
+    val elapsed = now - (lastReferenceSyncAt ?: 0L)
+    return if (force) {
+        elapsed >= SCANNER_REFERENCE_FORCE_REFRESH_DEBOUNCE_MS
+    } else {
+        elapsed >= SCANNER_REFERENCE_REFRESH_INTERVAL_MS
+    }
+}
+
 internal fun scannerMessageFor(
     record: ScannerRecord,
     language: AppLanguage,
@@ -96,7 +120,7 @@ internal fun scannerAutoUploadMessage(
         )
 
         ScannerAutoUploadState.CACHED_UNCONFIGURED -> language.pick(
-            "Server sync is not configured. The scan was saved locally.",
+            "Online upload is unavailable on this device. The scan was saved locally.",
             "服务器同步未配置，扫码结果已先保存到本地。",
         )
 
@@ -126,7 +150,7 @@ internal fun waitingScannerMessage(language: AppLanguage): String {
 
 internal fun privateSyncMissingMessage(language: AppLanguage): String {
     return language.pick(
-        "This build is not provisioned for private sync.",
+        "Online cargo updates are unavailable on this device.",
         "当前构建未预置私有同步配置。",
     )
 }

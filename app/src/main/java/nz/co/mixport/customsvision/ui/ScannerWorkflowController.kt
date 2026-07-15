@@ -25,6 +25,7 @@ internal class ScannerWorkflowController(
     private val activeOperatorName: () -> String,
 ) {
     private var scannerAutoUploadJob: Job? = null
+    private var lastObservedNetworkAvailable: Boolean? = null
 
     fun clearScannerHistory() {
         preferencesRepository.setScannerHistory(emptyList())
@@ -55,9 +56,12 @@ internal class ScannerWorkflowController(
         }
     }
 
-    fun refreshScannerReferences(manual: Boolean = true) {
+    fun refreshScannerReferences(
+        manual: Boolean = true,
+        force: Boolean = false,
+    ) {
         val language = currentLanguage()
-        val settings = currentScannerSyncSettings()
+        val settings = refreshProvisioningState()
         if (!settings.isConfigured()) {
             state.update {
                 it.copy(
@@ -70,7 +74,16 @@ internal class ScannerWorkflowController(
             }
             return
         }
-        if (state.value.scanner.sync.isRefreshing) {
+        if (!shouldRefreshScannerReferenceCache(
+                isConfigured = settings.isConfigured(),
+                isRefreshing = state.value.scanner.sync.isRefreshing,
+                isUploading = state.value.scanner.sync.isUploading,
+                referenceCount = state.value.scanner.sync.referenceCount,
+                lastReferenceSyncAt = state.value.scanner.sync.lastReferenceSyncAt,
+                now = System.currentTimeMillis(),
+                force = force,
+            )
+        ) {
             return
         }
         state.update {
@@ -79,7 +92,7 @@ internal class ScannerWorkflowController(
                     sync = it.scanner.sync.copy(
                         isRefreshing = true,
                         statusMessage = language.pick(
-                            if (manual) "Downloading the latest HBL cache..." else "Refreshing live scanner cache...",
+                            if (manual) "Updating the latest cargo list..." else "Refreshing the live cargo list...",
                             if (manual) "正在下载最新 HBL 缓存..." else "正在刷新在线扫码缓存...",
                         ),
                     ),
@@ -97,13 +110,15 @@ internal class ScannerWorkflowController(
             }.onSuccess { result ->
                 preferencesRepository.setScannerLastReferenceSyncAt(result.status.lastReferenceSyncAt)
                 preferencesRepository.setScannerLastReferenceCursor(result.cursor)
+                refreshLatestVisibleScannerResult(settings)
                 applyScannerSyncStatus(
                     status = result.status,
                     statusMessage = currentLanguage().pick(
-                        "Scanner cache updated. ${result.status.referenceCount} scan records are ready offline.",
+                        "Cargo list updated. ${result.status.referenceCount} records are ready offline.",
                         "扫码缓存已更新，可离线使用 ${result.status.referenceCount} 条记录。",
                     ),
                     isRefreshing = false,
+                    settings = settings,
                 )
             }.onFailure { throwable ->
                 state.update {
@@ -125,7 +140,7 @@ internal class ScannerWorkflowController(
 
     fun uploadPendingScannerScans() {
         val language = currentLanguage()
-        val settings = currentScannerSyncSettings()
+        val settings = refreshProvisioningState()
         if (state.value.scanner.sync.pendingUploadCount <= 0) {
             state.update {
                 it.copy(
@@ -162,7 +177,7 @@ internal class ScannerWorkflowController(
                     sync = it.scanner.sync.copy(
                         isUploading = true,
                         statusMessage = language.pick(
-                            "Uploading pending scanner results...",
+                            "Uploading saved scan results...",
                             "正在上传待处理扫码结果...",
                         ),
                     ),
@@ -180,14 +195,16 @@ internal class ScannerWorkflowController(
             }.onSuccess { syncStatus ->
                 preferencesRepository.setScannerLastUploadAt(syncStatus.lastUploadAt)
                 preferencesRepository.setScannerLastUploadBatchId(syncStatus.lastUploadBatchId)
+                refreshLatestVisibleScannerResult(settings)
                 applyScannerSyncStatus(
                     status = syncStatus,
                     statusMessage = currentLanguage().pick(
-                        "Scanner results uploaded. Batch #${syncStatus.lastUploadBatchId ?: 0} is now on the server.",
+                        "Saved scan results uploaded successfully.",
                         "扫码结果已上传，批次 #${syncStatus.lastUploadBatchId ?: 0} 已写入服务器。",
                     ),
                     isUploading = false,
                     networkAvailable = true,
+                    settings = settings,
                 )
             }.onFailure { throwable ->
                 state.update {
@@ -208,7 +225,9 @@ internal class ScannerWorkflowController(
     }
 
     fun refreshScannerConnectionState() {
-        if (!state.value.scanner.sync.isConfigured) {
+        val settings = refreshProvisioningState()
+        if (!settings.isConfigured()) {
+            lastObservedNetworkAvailable = null
             state.update {
                 it.copy(
                     scanner = it.scanner.copy(
@@ -220,6 +239,8 @@ internal class ScannerWorkflowController(
         }
         scope.launch {
             val networkAvailable = repository.isScannerNetworkAvailable()
+            val previousNetworkAvailable = lastObservedNetworkAvailable
+            lastObservedNetworkAvailable = networkAvailable
             state.update {
                 it.copy(
                     scanner = it.scanner.copy(
@@ -227,11 +248,15 @@ internal class ScannerWorkflowController(
                     ),
                 )
             }
+            if (networkAvailable && previousNetworkAvailable == false) {
+                refreshScannerReferences(manual = false, force = true)
+                maybeAutoUploadPendingScannerScans()
+            }
         }
     }
 
     fun maybeAutoUploadPendingScannerScans() {
-        val settings = currentScannerSyncSettings()
+        val settings = refreshProvisioningState()
         if (!settings.isConfigured()) {
             refreshScannerConnectionState()
             return
@@ -265,6 +290,7 @@ internal class ScannerWorkflowController(
                 if (result.state == ScannerAutoUploadState.UPLOADED) {
                     preferencesRepository.setScannerLastUploadAt(result.status.lastUploadAt)
                     preferencesRepository.setScannerLastUploadBatchId(result.status.lastUploadBatchId)
+                    refreshLatestVisibleScannerResult(settings)
                 }
                 applyScannerSyncStatus(
                     status = result.status,
@@ -272,6 +298,7 @@ internal class ScannerWorkflowController(
                     isUploading = result.state == ScannerAutoUploadState.UPLOADED &&
                         result.status.pendingUploadCount > 0,
                     networkAvailable = result.networkAvailable,
+                    settings = settings,
                 )
                 keepUploading = result.state == ScannerAutoUploadState.UPLOADED &&
                     result.status.pendingUploadCount > 0
@@ -368,6 +395,8 @@ internal class ScannerWorkflowController(
                         lastLookupResult = lookupResult,
                         feedbackNonce = it.scanner.feedbackNonce + 1,
                         sync = it.scanner.sync.copy(
+                            isProvisioned = syncSettings.hasPrivateProfile(),
+                            deviceId = syncSettings.deviceId,
                             networkAvailable = networkAvailable,
                             referenceCount = syncStatus.referenceCount,
                             pendingUploadCount = syncStatus.pendingUploadCount,
@@ -411,7 +440,7 @@ internal class ScannerWorkflowController(
 
     fun refreshScannerSyncStatus() {
         scope.launch {
-            val settings = currentScannerSyncSettings()
+            val settings = refreshProvisioningState()
             val syncStatus = repository.getScannerSyncStatus(
                 lastReferenceSyncAt = preferencesRepository.getScannerLastReferenceSyncAt(),
                 lastUploadAt = preferencesRepository.getScannerLastUploadAt(),
@@ -426,24 +455,31 @@ internal class ScannerWorkflowController(
                 status = syncStatus,
                 statusMessage = state.value.scanner.sync.statusMessage,
                 networkAvailable = networkAvailable,
+                settings = settings,
             )
         }
     }
 
     fun autoRefreshScannerReferences() {
+        autoRefreshScannerReferences(force = false)
+    }
+
+    fun autoRefreshScannerReferences(force: Boolean) {
+        val settings = refreshProvisioningState()
         val sync = state.value.scanner.sync
-        if (!sync.isConfigured || sync.isRefreshing || sync.isUploading) {
+        if (!shouldRefreshScannerReferenceCache(
+                isConfigured = settings.isConfigured(),
+                isRefreshing = sync.isRefreshing,
+                isUploading = sync.isUploading,
+                referenceCount = sync.referenceCount,
+                lastReferenceSyncAt = sync.lastReferenceSyncAt,
+                now = System.currentTimeMillis(),
+                force = force,
+            )
+        ) {
             return
         }
-        if (sync.referenceCount <= 0) {
-            refreshScannerReferences(manual = false)
-            return
-        }
-        val lastSyncAt = sync.lastReferenceSyncAt ?: 0L
-        if (System.currentTimeMillis() - lastSyncAt < SCANNER_REFERENCE_REFRESH_INTERVAL_MS) {
-            return
-        }
-        refreshScannerReferences(manual = false)
+        refreshScannerReferences(manual = false, force = force)
     }
 
     private suspend fun lookupBarcode(barcode: String): BarcodeLookupResult? {
@@ -459,11 +495,14 @@ internal class ScannerWorkflowController(
         isRefreshing: Boolean = state.value.scanner.sync.isRefreshing,
         isUploading: Boolean = state.value.scanner.sync.isUploading,
         networkAvailable: Boolean? = state.value.scanner.sync.networkAvailable,
+        settings: ScannerSyncSettings = currentScannerSyncSettings(),
     ) {
         state.update {
             it.copy(
                 scanner = it.scanner.copy(
                     sync = it.scanner.sync.copy(
+                        isProvisioned = settings.hasPrivateProfile(),
+                        deviceId = settings.deviceId,
                         networkAvailable = networkAvailable,
                         referenceCount = status.referenceCount,
                         pendingUploadCount = status.pendingUploadCount,
@@ -479,8 +518,73 @@ internal class ScannerWorkflowController(
         }
     }
 
+    private fun refreshProvisioningState(): ScannerSyncSettings {
+        val settings = currentScannerSyncSettings()
+        state.update {
+            val sync = it.scanner.sync
+            if (
+                sync.isProvisioned == settings.hasPrivateProfile() &&
+                sync.deviceId == settings.deviceId
+            ) {
+                it
+            } else {
+                it.copy(
+                    scanner = it.scanner.copy(
+                        sync = sync.copy(
+                            isProvisioned = settings.hasPrivateProfile(),
+                            deviceId = settings.deviceId,
+                        ),
+                    ),
+                )
+            }
+        }
+        return settings
+    }
+
     private fun currentScannerSyncSettings(): ScannerSyncSettings {
         return preferencesRepository.getScannerSyncSettings()
+    }
+
+    private suspend fun refreshLatestVisibleScannerResult(settings: ScannerSyncSettings) {
+        val scannerSnapshot = state.value.scanner
+        val latestRecord = scannerSnapshot.history.firstOrNull() ?: return
+        val latestBarcode = scannerSnapshot.lastProcessedBarcode
+            ?.takeIf(String::isNotBlank)
+            ?: latestRecord.scannedBarcode.takeIf(String::isNotBlank)
+            ?: return
+
+        val lookupAttempt = runCatching {
+            repository.lookupBarcode(latestBarcode, settings)
+        }
+        if (lookupAttempt.isFailure) {
+            return
+        }
+        val refreshedLookup = lookupAttempt.getOrNull()
+
+        val refreshedRecord = buildScannerRecord(
+            barcode = latestBarcode,
+            lookupResult = refreshedLookup,
+            scannedAt = latestRecord.scannedAt,
+        )
+        val updatedHistory = listOf(refreshedRecord) + scannerSnapshot.history.drop(1)
+        preferencesRepository.setScannerHistory(updatedHistory)
+
+        state.update {
+            val isWaitingState = !it.scanner.isProcessing && it.scanner.lastResult == ScannerMatchStatus.WAITING
+            it.copy(
+                scanner = it.scanner.copy(
+                    history = updatedHistory,
+                    lastResult = if (isWaitingState) it.scanner.lastResult else refreshedRecord.matchStatus,
+                    statusMessage = if (isWaitingState) {
+                        it.scanner.statusMessage
+                    } else {
+                        scannerMessageFor(refreshedRecord, it.appLanguage)
+                    },
+                    lastLookupResult = refreshedLookup,
+                    lastProcessedBarcode = refreshedRecord.scannedBarcode,
+                ),
+            )
+        }
     }
 
     private fun currentLanguage(): AppLanguage = state.value.appLanguage

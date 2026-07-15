@@ -38,6 +38,12 @@ data class ScannerBootstrapRow(
     val serverErrorScanCount: Int,
     val serverLastScannedAt: String,
     val serverLastMatchStatus: String,
+    val scannerTargetMode: String,
+    val scannerExpectedScanCount: Int,
+    val scannerCompletedScanCount: Int,
+    val scannerRemainingScanCount: Int,
+    val scannerRepeatMatchCount: Int,
+    val scannerIsComplete: Boolean,
 )
 
 data class ScannerBootstrapPayload(
@@ -111,6 +117,12 @@ class CustomsSyncClient {
                         serverErrorScanCount = item.optInt("server_error_scan_count"),
                         serverLastScannedAt = item.optString("server_last_scanned_at"),
                         serverLastMatchStatus = item.optString("server_last_match_status"),
+                        scannerTargetMode = item.optString("scanner_target_mode").ifBlank { "events" },
+                        scannerExpectedScanCount = item.optInt("scanner_expected_scan_count"),
+                        scannerCompletedScanCount = item.optInt("scanner_completed_scan_count"),
+                        scannerRemainingScanCount = item.optInt("scanner_remaining_scan_count"),
+                        scannerRepeatMatchCount = item.optInt("scanner_repeat_match_count"),
+                        scannerIsComplete = item.optBoolean("scanner_is_complete"),
                     ),
                 )
             }
@@ -161,6 +173,40 @@ class CustomsSyncClient {
                 submissionDate = dataJson.optString("submission_date").ifBlank { null },
                 customersStatus = dataJson.optString("customers_status").ifBlank { null },
                 mpiStatus = dataJson.optString("mpi_status").ifBlank { null },
+                serverScanCount = dataJson.optInt("server_scan_count"),
+                serverMatchedScanCount = dataJson.optInt("server_matched_scan_count"),
+                serverMismatchScanCount = dataJson.optInt("server_mismatch_scan_count"),
+                serverErrorScanCount = dataJson.optInt("server_error_scan_count"),
+                serverLastScannedAt = dataJson.optString("server_last_scanned_at").ifBlank { null },
+                serverLastMatchStatus = dataJson.optString("server_last_match_status").ifBlank { null },
+                scannerTargetMode = dataJson.optString("scanner_target_mode").ifBlank { null },
+                scannerExpectedScanCount = dataJson.optInt("scanner_expected_scan_count").takeIf {
+                    dataJson.has("scanner_expected_scan_count") && !dataJson.isNull("scanner_expected_scan_count")
+                },
+                scannerCompletedScanCount = dataJson.optInt("scanner_completed_scan_count").takeIf {
+                    dataJson.has("scanner_completed_scan_count") && !dataJson.isNull("scanner_completed_scan_count")
+                },
+                scannerRemainingScanCount = dataJson.optInt("scanner_remaining_scan_count").takeIf {
+                    dataJson.has("scanner_remaining_scan_count") && !dataJson.isNull("scanner_remaining_scan_count")
+                },
+                scannerRepeatMatchCount = dataJson.optInt("scanner_repeat_match_count").takeIf {
+                    dataJson.has("scanner_repeat_match_count") && !dataJson.isNull("scanner_repeat_match_count")
+                },
+                scannerIsComplete = dataJson.optBoolean("scanner_is_complete").takeIf {
+                    dataJson.has("scanner_is_complete") && !dataJson.isNull("scanner_is_complete")
+                },
+                containerScanCount = dataJson.optInt("container_scan_count").takeIf {
+                    dataJson.has("container_scan_count") && !dataJson.isNull("container_scan_count")
+                },
+                containerMatchedScanCount = dataJson.optInt("container_matched_scan_count").takeIf {
+                    dataJson.has("container_matched_scan_count") && !dataJson.isNull("container_matched_scan_count")
+                },
+                containerRowCount = dataJson.optInt("container_row_count").takeIf {
+                    dataJson.has("container_row_count") && !dataJson.isNull("container_row_count")
+                },
+                containerMatchedRowCount = dataJson.optInt("container_matched_row_count").takeIf {
+                    dataJson.has("container_matched_row_count") && !dataJson.isNull("container_matched_row_count")
+                },
             )
         }
         return BarcodeVerificationResponse(

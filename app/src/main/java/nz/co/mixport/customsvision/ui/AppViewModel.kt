@@ -162,7 +162,7 @@ class AppViewModel(
         _uiState.update { it.copy(selectedDestination = destination) }
         if (destination == AppDestination.SCANNER) {
             scannerWorkflowController.refreshScannerConnectionState()
-            scannerWorkflowController.autoRefreshScannerReferences()
+            scannerWorkflowController.autoRefreshScannerReferences(force = true)
         }
     }
 
@@ -283,8 +283,11 @@ class AppViewModel(
         scannerWorkflowController.prepareScannerForNextScan()
     }
 
-    fun refreshScannerReferences(manual: Boolean = true) {
-        scannerWorkflowController.refreshScannerReferences(manual)
+    fun refreshScannerReferences(
+        manual: Boolean = true,
+        force: Boolean = false,
+    ) {
+        scannerWorkflowController.refreshScannerReferences(manual, force)
     }
 
     fun uploadPendingScannerScans() {

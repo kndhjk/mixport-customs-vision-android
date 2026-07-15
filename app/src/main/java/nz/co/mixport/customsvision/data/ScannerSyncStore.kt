@@ -41,7 +41,13 @@ class ScannerSyncStore(
                 server_mismatch_scan_count INTEGER NOT NULL DEFAULT 0,
                 server_error_scan_count INTEGER NOT NULL DEFAULT 0,
                 server_last_scanned_at TEXT NOT NULL DEFAULT '',
-                server_last_match_status TEXT NOT NULL DEFAULT ''
+                server_last_match_status TEXT NOT NULL DEFAULT '',
+                scanner_target_mode TEXT NOT NULL DEFAULT 'events',
+                scanner_expected_scan_count INTEGER NOT NULL DEFAULT 0,
+                scanner_completed_scan_count INTEGER NOT NULL DEFAULT 0,
+                scanner_remaining_scan_count INTEGER NOT NULL DEFAULT 0,
+                scanner_repeat_match_count INTEGER NOT NULL DEFAULT 0,
+                scanner_is_complete INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent(),
         )
@@ -99,6 +105,12 @@ class ScannerSyncStore(
         ensureColumn(db, "server_barcode_reference", "server_error_scan_count", "INTEGER NOT NULL DEFAULT 0")
         ensureColumn(db, "server_barcode_reference", "server_last_scanned_at", "TEXT NOT NULL DEFAULT ''")
         ensureColumn(db, "server_barcode_reference", "server_last_match_status", "TEXT NOT NULL DEFAULT ''")
+        ensureColumn(db, "server_barcode_reference", "scanner_target_mode", "TEXT NOT NULL DEFAULT 'events'")
+        ensureColumn(db, "server_barcode_reference", "scanner_expected_scan_count", "INTEGER NOT NULL DEFAULT 0")
+        ensureColumn(db, "server_barcode_reference", "scanner_completed_scan_count", "INTEGER NOT NULL DEFAULT 0")
+        ensureColumn(db, "server_barcode_reference", "scanner_remaining_scan_count", "INTEGER NOT NULL DEFAULT 0")
+        ensureColumn(db, "server_barcode_reference", "scanner_repeat_match_count", "INTEGER NOT NULL DEFAULT 0")
+        ensureColumn(db, "server_barcode_reference", "scanner_is_complete", "INTEGER NOT NULL DEFAULT 0")
         ensureColumn(db, "scanner_scan_log", "barcode_key", "TEXT NOT NULL DEFAULT ''")
         ensureColumn(db, "scanner_scan_log", "disposition_state", "TEXT NOT NULL DEFAULT 'ACTIVE'")
         ensureColumn(db, "scanner_scan_log", "reconciled_at", "INTEGER")
@@ -173,6 +185,12 @@ class ScannerSyncStore(
                         "server_error_scan_count" to row.serverErrorScanCount,
                         "server_last_scanned_at" to row.serverLastScannedAt,
                         "server_last_match_status" to row.serverLastMatchStatus,
+                        "scanner_target_mode" to row.scannerTargetMode,
+                        "scanner_expected_scan_count" to row.scannerExpectedScanCount,
+                        "scanner_completed_scan_count" to row.scannerCompletedScanCount,
+                        "scanner_remaining_scan_count" to row.scannerRemainingScanCount,
+                        "scanner_repeat_match_count" to row.scannerRepeatMatchCount,
+                        "scanner_is_complete" to if (row.scannerIsComplete) 1 else 0,
                     ),
                     SQLiteDatabase.CONFLICT_REPLACE,
                 )
@@ -389,6 +407,18 @@ class ScannerSyncStore(
         submissionDate = getString(getColumnIndexOrThrow("submission_date")).ifBlank { null },
         customersStatus = getString(getColumnIndexOrThrow("customers_status")).ifBlank { null },
         mpiStatus = getString(getColumnIndexOrThrow("mpi_status")).ifBlank { null },
+        serverScanCount = getInt(getColumnIndexOrThrow("server_scan_count")),
+        serverMatchedScanCount = getInt(getColumnIndexOrThrow("server_matched_scan_count")),
+        serverMismatchScanCount = getInt(getColumnIndexOrThrow("server_mismatch_scan_count")),
+        serverErrorScanCount = getInt(getColumnIndexOrThrow("server_error_scan_count")),
+        serverLastScannedAt = getString(getColumnIndexOrThrow("server_last_scanned_at")).ifBlank { null },
+        serverLastMatchStatus = getString(getColumnIndexOrThrow("server_last_match_status")).ifBlank { null },
+        scannerTargetMode = getString(getColumnIndexOrThrow("scanner_target_mode")).ifBlank { null },
+        scannerExpectedScanCount = getInt(getColumnIndexOrThrow("scanner_expected_scan_count")),
+        scannerCompletedScanCount = getInt(getColumnIndexOrThrow("scanner_completed_scan_count")),
+        scannerRemainingScanCount = getInt(getColumnIndexOrThrow("scanner_remaining_scan_count")),
+        scannerRepeatMatchCount = getInt(getColumnIndexOrThrow("scanner_repeat_match_count")),
+        scannerIsComplete = getInt(getColumnIndexOrThrow("scanner_is_complete")) > 0,
     )
 
     private fun Cursor.toPendingScannerUploadRecord(): PendingScannerUploadRecord = PendingScannerUploadRecord(
