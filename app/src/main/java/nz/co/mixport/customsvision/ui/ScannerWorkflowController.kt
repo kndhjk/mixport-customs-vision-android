@@ -170,12 +170,14 @@ internal class ScannerWorkflowController(
             }.onSuccess { result ->
                 preferencesRepository.setScannerLastReferenceSyncAt(result.status.lastReferenceSyncAt)
                 preferencesRepository.setScannerLastReferenceCursor(result.cursor)
+                applyDeletedScannerHistory(result.deletedBarcodeKeys)
                 refreshLatestVisibleScannerResult(settings)
                 applyScannerSyncStatus(
                     status = result.status,
-                    statusMessage = currentLanguage().pick(
-                        "Cargo list updated. ${result.status.referenceCount} records are ready offline.",
-                        "扫码缓存已更新，可离线使用 ${result.status.referenceCount} 条记录。",
+                    statusMessage = scannerRefreshSuccessMessage(
+                        referenceCount = result.status.referenceCount,
+                        deletedCount = result.deletedBarcodeKeys.size,
+                        language = currentLanguage(),
                     ),
                     isRefreshing = false,
                     settings = settings,
@@ -666,6 +668,72 @@ internal class ScannerWorkflowController(
                     selectedHistoryRecord = refreshedSelectedRecord ?: it.scanner.selectedHistoryRecord,
                     selectedHistoryDetail = refreshedSelectedDetail ?: it.scanner.selectedHistoryDetail,
                 ),
+            )
+        }
+    }
+
+    private fun applyDeletedScannerHistory(barcodeKeys: Collection<String>) {
+        val normalizedKeys = barcodeKeys
+            .asSequence()
+            .map(::normalizeScannerBarcode)
+            .filter(String::isNotBlank)
+            .toSet()
+        if (normalizedKeys.isEmpty()) {
+            return
+        }
+
+        val updatedHistory = preferencesRepository.pruneScannerHistoryByBarcodeKeys(normalizedKeys)
+        state.update { currentState ->
+            val scannerState = currentState.scanner
+            val lastProcessedRemoved = scannerState.lastProcessedBarcode
+                ?.let(::normalizeScannerBarcode)
+                ?.let(normalizedKeys::contains)
+                ?: false
+            val selectedRecordRemoved = scannerState.selectedHistoryRecord
+                ?.let { normalizeScannerBarcode(it.scannedBarcode) in normalizedKeys }
+                ?: false
+            val selectedDetailRemoved = scannerState.selectedHistoryDetail
+                ?.let { normalizeScannerBarcode(it.record.scannedBarcode) in normalizedKeys }
+                ?: false
+            val nextLatestRecord = updatedHistory.firstOrNull()
+            currentState.copy(
+                scanner = scannerState.copy(
+                    history = updatedHistory,
+                    lastProcessedBarcode = if (lastProcessedRemoved) nextLatestRecord?.scannedBarcode else scannerState.lastProcessedBarcode,
+                    lastLookupResult = if (lastProcessedRemoved) nextLatestRecord?.lookupSnapshot else scannerState.lastLookupResult,
+                    lastResult = if (lastProcessedRemoved && nextLatestRecord == null) {
+                        ScannerMatchStatus.WAITING
+                    } else {
+                        scannerState.lastResult
+                    },
+                    statusMessage = if (lastProcessedRemoved && nextLatestRecord == null) {
+                        waitingScannerMessage(currentState.appLanguage)
+                    } else {
+                        scannerState.statusMessage
+                    },
+                    selectedHistoryRecord = if (selectedRecordRemoved) null else scannerState.selectedHistoryRecord,
+                    selectedHistoryDetail = if (selectedDetailRemoved) null else scannerState.selectedHistoryDetail,
+                    isHistoryDetailLoading = if (selectedRecordRemoved || selectedDetailRemoved) false else scannerState.isHistoryDetailLoading,
+                    historyDetailError = if (selectedRecordRemoved || selectedDetailRemoved) null else scannerState.historyDetailError,
+                ),
+            )
+        }
+    }
+
+    private fun scannerRefreshSuccessMessage(
+        referenceCount: Int,
+        deletedCount: Int,
+        language: AppLanguage,
+    ): String {
+        return if (deletedCount > 0) {
+            language.pick(
+                "Cargo list updated. $referenceCount records are ready offline and $deletedCount removed codes were cleared locally.",
+                "扫码缓存已更新，可离线使用 $referenceCount 条记录，已同步清除 $deletedCount 个失效条码。",
+            )
+        } else {
+            language.pick(
+                "Cargo list updated. $referenceCount records are ready offline.",
+                "扫码缓存已更新，可离线使用 $referenceCount 条记录。",
             )
         }
     }

@@ -145,6 +145,7 @@ data class ScannerAutoUploadResult(
 data class ScannerReferenceRefreshResult(
     val status: ScannerSyncStatus,
     val cursor: String? = null,
+    val deletedBarcodeKeys: List<String> = emptyList(),
 )
 
 data class PendingScannerUploadRecord(

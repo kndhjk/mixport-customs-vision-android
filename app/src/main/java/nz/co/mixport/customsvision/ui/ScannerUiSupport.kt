@@ -8,7 +8,7 @@ import nz.co.mixport.customsvision.data.ScannerMatchStatus
 import nz.co.mixport.customsvision.data.ScannerRecord
 import nz.co.mixport.customsvision.data.isUsableScannerBarcode
 
-internal const val SCANNER_REFERENCE_REFRESH_INTERVAL_MS = 15_000L
+internal const val SCANNER_REFERENCE_REFRESH_INTERVAL_MS = 8_000L
 internal const val SCANNER_REFERENCE_FORCE_REFRESH_DEBOUNCE_MS = 4_000L
 internal const val SCANNER_SOURCE_LOCAL = "LOCAL"
 internal const val SCANNER_RECORD_NOT_FOUND = "NOT_FOUND"

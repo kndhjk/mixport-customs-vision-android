@@ -48,6 +48,7 @@ data class ScannerBootstrapRow(
 
 data class ScannerBootstrapPayload(
     val rows: List<ScannerBootstrapRow>,
+    val deletedBarcodeKeys: List<String>,
     val syncedAt: Long,
     val cursor: String,
 )
@@ -127,8 +128,18 @@ class CustomsSyncClient {
                 )
             }
         }
+        val deletedBarcodeKeysJson = response.optJSONArray("deleted_barcode_keys") ?: JSONArray()
+        val deletedBarcodeKeys = buildList {
+            for (index in 0 until deletedBarcodeKeysJson.length()) {
+                val normalized = normalizeScannerBarcode(deletedBarcodeKeysJson.optString(index))
+                if (normalized.isNotBlank()) {
+                    add(normalized)
+                }
+            }
+        }.distinct()
         return ScannerBootstrapPayload(
             rows = rows,
+            deletedBarcodeKeys = deletedBarcodeKeys,
             syncedAt = parseServerTimeMillis(response.optString("synced_at")) ?: System.currentTimeMillis(),
             cursor = response.optString("cursor"),
         )

@@ -361,6 +361,9 @@ class CustomsDatabaseHelper(context: Context) :
 
     fun deleteServerBarcodeReference(barcode: String) = scannerSyncStore.deleteServerBarcodeReference(barcode)
 
+    fun purgeScannerDataForBarcodeKeys(barcodeKeys: Collection<String>): Set<String> =
+        scannerSyncStore.purgeScannerDataForBarcodeKeys(barcodeKeys)
+
     fun clearServerBarcodeReferences(): Int = scannerSyncStore.clearServerBarcodeReferences()
 
     fun recordScannerScan(record: ScannerRecord, lookupResult: BarcodeLookupResult?): Long {

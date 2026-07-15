@@ -104,6 +104,23 @@ class AppPreferencesRepository(context: Context) {
         preferences.edit().putString(KEY_SCANNER_HISTORY, jsonArray.toString()).apply()
     }
 
+    fun pruneScannerHistoryByBarcodeKeys(barcodeKeys: Collection<String>): List<ScannerRecord> {
+        val normalizedKeys = barcodeKeys
+            .asSequence()
+            .map(::normalizeScannerBarcode)
+            .filter(String::isNotBlank)
+            .toSet()
+        if (normalizedKeys.isEmpty()) {
+            return getScannerHistory()
+        }
+
+        val updatedHistory = getScannerHistory().filterNot { record ->
+            normalizeScannerBarcode(record.scannedBarcode) in normalizedKeys
+        }
+        setScannerHistory(updatedHistory)
+        return updatedHistory
+    }
+
     fun getScannerSyncSettings(): ScannerSyncSettings {
         val storedDeviceId = preferences.getString(KEY_SCANNER_DEVICE_ID, null).orEmpty().trim()
         val resolvedDeviceId = storedDeviceId.ifBlank {

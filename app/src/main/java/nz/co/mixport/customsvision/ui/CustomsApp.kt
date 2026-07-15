@@ -94,7 +94,6 @@ private val OverlayScrim = Color(0x22000000)
 private val BrandGradientStart = Color(0xFFF45D22)
 private val BrandGradientEnd = Color(0xFFD94D1A)
 private val BrandTint = Color(0xFFFFF3EB)
-private const val ScannerAutoRefreshIntervalMs = 15_000L
 private const val ScannerAutoUploadRetryIntervalMs = 5_000L
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -104,6 +103,8 @@ fun CustomsApp(viewModel: AppViewModel) {
     val context = LocalContext.current
     val language = uiState.appLanguage
     val lifecycleOwner = LocalLifecycleOwner.current
+    val scannerScreenActive = uiState.selectedDestination == AppDestination.SCANNER
+    val shouldMaintainScannerUploadLoop = scannerScreenActive || uiState.scanner.sync.pendingUploadCount > 0
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -126,17 +127,18 @@ fun CustomsApp(viewModel: AppViewModel) {
 
     LaunchedEffect(
         lifecycleOwner,
+        scannerScreenActive,
         uiState.scanner.sync.isProvisioned,
         uiState.scanner.sync.deviceId,
     ) {
-        if (!uiState.scanner.sync.isConfigured) {
+        if (!uiState.scanner.sync.isConfigured || !scannerScreenActive) {
             return@LaunchedEffect
         }
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             viewModel.refreshScannerConnectionState()
             viewModel.refreshScannerReferences(manual = false, force = true)
             while (true) {
-                delay(ScannerAutoRefreshIntervalMs)
+                delay(SCANNER_REFERENCE_REFRESH_INTERVAL_MS)
                 viewModel.refreshScannerReferences(manual = false)
             }
         }
@@ -144,10 +146,12 @@ fun CustomsApp(viewModel: AppViewModel) {
 
     LaunchedEffect(
         lifecycleOwner,
+        shouldMaintainScannerUploadLoop,
         uiState.scanner.sync.isProvisioned,
         uiState.scanner.sync.deviceId,
+        uiState.scanner.sync.pendingUploadCount,
     ) {
-        if (!uiState.scanner.sync.isConfigured) {
+        if (!uiState.scanner.sync.isConfigured || !shouldMaintainScannerUploadLoop) {
             return@LaunchedEffect
         }
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {

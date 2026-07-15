@@ -101,7 +101,11 @@ class PilotRepository(
         try {
             val remote = syncClient.verifyBarcode(settings, normalizedBarcode)
             if (!remote.found) {
-                databaseHelper.deleteServerBarcodeReference(normalizedBarcode)
+                if (local != null) {
+                    databaseHelper.purgeScannerDataForBarcodeKeys(listOf(normalizedBarcode))
+                } else {
+                    databaseHelper.deleteServerBarcodeReference(normalizedBarcode)
+                }
                 return@withContext null
             }
 
@@ -161,6 +165,7 @@ class PilotRepository(
         var replaceExisting = cursor.isBlank()
         var syncedAt = System.currentTimeMillis()
         var page = 0
+        val deletedBarcodeKeys = linkedSetOf<String>()
         while (page < MAX_BOOTSTRAP_PAGES) {
             val payload = syncClient.fetchScannerBootstrap(
                 settings = settings,
@@ -174,6 +179,9 @@ class PilotRepository(
                     reconciledAt = syncedAt,
                     reason = "resolved_by_reference_refresh",
                 )
+            }
+            if (payload.deletedBarcodeKeys.isNotEmpty()) {
+                deletedBarcodeKeys += databaseHelper.purgeScannerDataForBarcodeKeys(payload.deletedBarcodeKeys)
             }
             replaceExisting = false
 
@@ -196,6 +204,7 @@ class PilotRepository(
                 lastUploadBatchId = lastUploadBatchId,
             ),
             cursor = cursor.takeIf(String::isNotBlank),
+            deletedBarcodeKeys = deletedBarcodeKeys.toList(),
         )
     }
 

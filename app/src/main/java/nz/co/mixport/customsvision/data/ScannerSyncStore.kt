@@ -210,6 +210,35 @@ class ScannerSyncStore(
         )
     }
 
+    fun purgeScannerDataForBarcodeKeys(barcodeKeys: Collection<String>): Set<String> {
+        val normalizedKeys = barcodeKeys
+            .asSequence()
+            .map(::normalizeScannerBarcode)
+            .filter(String::isNotBlank)
+            .distinct()
+            .toList()
+        if (normalizedKeys.isEmpty()) {
+            return emptySet()
+        }
+
+        val placeholders = normalizedKeys.joinToString(",") { "?" }
+        val args = normalizedKeys.toTypedArray()
+        val db = writableDatabaseProvider()
+        db.transaction {
+            delete(
+                "server_barcode_reference",
+                "barcode_key IN ($placeholders)",
+                args,
+            )
+            delete(
+                "scanner_scan_log",
+                "barcode_key IN ($placeholders)",
+                args,
+            )
+        }
+        return normalizedKeys.toSet()
+    }
+
     fun clearServerBarcodeReferences(): Int {
         return writableDatabaseProvider().delete("server_barcode_reference", null, null)
     }
