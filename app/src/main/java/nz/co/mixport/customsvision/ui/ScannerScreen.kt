@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -44,7 +46,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Job
@@ -53,6 +58,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import nz.co.mixport.customsvision.data.AppLanguage
 import nz.co.mixport.customsvision.data.BarcodeLookupResult
+import nz.co.mixport.customsvision.data.isUsableScannerBarcode
 import nz.co.mixport.customsvision.data.normalizeScannerBarcode
 import nz.co.mixport.customsvision.data.ScannerMatchStatus
 import nz.co.mixport.customsvision.data.ScannerRecordDetail
@@ -312,19 +318,6 @@ fun ScannerScreen(
             ScannerMatchStatus.WAITING -> Unit
         }
         lastPlayedFeedbackNonce = scanner.feedbackNonce
-    }
-
-    LaunchedEffect(scanner.barcodeInput, scanner.isAutoVerifyEnabled, scanner.isProcessing) {
-        val candidate = normalizeScannerBarcode(scanner.barcodeInput)
-        if (!scanner.isAutoVerifyEnabled || scanner.isProcessing || candidate.length < 4) {
-            return@LaunchedEffect
-        }
-        delay(180)
-        if (normalizeScannerBarcode(scanner.barcodeInput) == candidate &&
-            scanner.lastProcessedBarcode != candidate
-        ) {
-            onScannerVerify(candidate)
-        }
     }
 
     LazyColumn(
@@ -695,6 +688,10 @@ private fun ScannerInputCard(
     onInputChanged: (String) -> Unit,
     onVerify: (String) -> Unit,
 ) {
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val normalizedInput = normalizeScannerBarcode(scanner.barcodeInput)
+    val canSubmit = !scanner.isProcessing && isUsableScannerBarcode(normalizedInput)
+
     ElevatedCard {
         Column(
             modifier = Modifier.padding(18.dp),
@@ -707,8 +704,8 @@ private fun ScannerInputCard(
             )
             Text(
                 text = language.pick(
-                    "Use this field only when a serial number needs to be typed manually.",
-                    "只有在需要手动输入序列号时才使用这里。",
+                    "Type the complete HBL, serial, or container number, then press Done or Verify now.",
+                    "请完整输入 HBL、序列号或柜号，再按完成或立即校验。",
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -717,15 +714,27 @@ private fun ScannerInputCard(
                 value = scanner.barcodeInput,
                 onValueChange = { onInputChanged(it.replace("\n", "").replace("\r", "")) },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text(language.pick("Serial number", "序列号")) },
-                placeholder = { Text(language.pick("Scan or type here", "扫描或手动输入")) },
+                label = { Text(language.pick("HBL / serial / container number", "HBL / 序列号 / 柜号")) },
+                placeholder = { Text(language.pick("Type the complete number", "请输入完整号码")) },
                 singleLine = true,
                 enabled = !scanner.isProcessing,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Ascii,
+                    imeAction = ImeAction.Done,
+                ),
+                keyboardActions = KeyboardActions(
+                    onDone = {
+                        if (canSubmit) {
+                            keyboardController?.hide()
+                            onVerify(normalizedInput)
+                        }
+                    },
+                ),
             )
             Button(
-                onClick = { onVerify(scanner.barcodeInput) },
+                onClick = { onVerify(normalizedInput) },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !scanner.isProcessing,
+                enabled = canSubmit,
             ) {
                 Text(
                     if (scanner.isProcessing) {

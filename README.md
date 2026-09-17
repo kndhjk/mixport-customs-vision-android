@@ -43,6 +43,7 @@ Live page snapshot on Hikrobot PDA:
 - supports PDA side hardware scan keys:
   - tap once: one scan
   - hold the key: repeated scan until release
+- keeps manual HBL / serial / container entry editable until the worker explicitly presses keyboard `Done` or `Verify now`; typing no longer triggers validation after four characters
 - shows the scanned serial number and database comparison result at the top of the page
 - shows live scan progress for the matched cargo row, including package / child-HBL completion, repeat scans, and current container scan totals
 - keeps the recent-scan list lightweight on-device, then opens a full detail sheet on demand so workers can inspect matched HBLs, child HBLs, barcode codes, clearance state, counts, and local upload/audit trace without leaving the scanner page
