@@ -213,6 +213,8 @@ Release signing values are GitHub Actions secrets. The keystore, passwords, priv
 
 The clear and failed sounds are short, offline resources so scanning does not depend on network playback. Their source and license record is maintained in [`docs/licenses/AUDIO_ASSETS.md`](docs/licenses/AUDIO_ASSETS.md). Hold uses a short Android-generated warning beep to stay recognisably different from both terminal outcomes.
 
+The Hikrobot decode tone is disabled using both `scanVoice=false` and `toneType=0` (`OFF`). On the deployed firmware, `scanVoice` alone does not disable the decode/repeat beep. This setting is reapplied during scanner configuration, service reconnection, and camera initialization. The first audible feedback is emitted after barcode verification: CLEAR only when both NZCS and MPI are clear, HOLD for pending/unknown clearance, and FAILED for a failed clearance or an unmatched/error result. A key press or a raw barcode read does not play a success sound. Returning to the scanner screen does not replay an earlier scan; a new result stops any still-playing previous cue before playing its own.
+
 The scanner result is tied to the exact scan event (barcode, timestamp, and local log ID). A late sync or upload lookup cannot replace a newer result, and holding the PDA scan key no longer resets the result every repeat interval. While a scan is being verified, the result card hides the previous cargo's clearance details instead of briefly showing them as the new result. The release shrinker explicitly retains updater JSON models so GitHub update checks also work in minified APKs.
 
 ## Scanner sync workflow

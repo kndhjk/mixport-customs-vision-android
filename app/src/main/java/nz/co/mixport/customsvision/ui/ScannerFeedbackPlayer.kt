@@ -50,6 +50,7 @@ internal class ScannerFeedbackPlayer(context: Context) : AutoCloseable {
     private val loadedSounds = ConcurrentHashMap.newKeySet<Int>()
     private val clearSoundId: Int
     private val failedSoundId: Int
+    private var activeStreamId = 0
 
     init {
         soundPool.setOnLoadCompleteListener { _, sampleId, status ->
@@ -62,6 +63,7 @@ internal class ScannerFeedbackPlayer(context: Context) : AutoCloseable {
     }
 
     fun play(sound: ScannerFeedbackSound) {
+        stop()
         when (sound) {
             ScannerFeedbackSound.CLEAR -> playSampleOrTone(
                 sampleId = clearSoundId,
@@ -93,13 +95,22 @@ internal class ScannerFeedbackPlayer(context: Context) : AutoCloseable {
         fallbackDurationMs: Int,
     ) {
         if (sampleId in loadedSounds) {
-            soundPool.play(sampleId, volume, volume, 1, 0, 1f)
-        } else {
-            toneGenerator.startTone(fallbackTone, fallbackDurationMs)
+            activeStreamId = soundPool.play(sampleId, volume, volume, 1, 0, 1f)
+            if (activeStreamId != 0) return
         }
+        toneGenerator.startTone(fallbackTone, fallbackDurationMs)
+    }
+
+    private fun stop() {
+        if (activeStreamId != 0) {
+            soundPool.stop(activeStreamId)
+            activeStreamId = 0
+        }
+        toneGenerator.stopTone()
     }
 
     override fun close() {
+        stop()
         soundPool.release()
         toneGenerator.release()
     }

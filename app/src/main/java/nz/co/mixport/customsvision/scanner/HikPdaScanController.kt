@@ -112,6 +112,7 @@ class HikPdaScanController(
                 val broadcast = intent ?: return
                 HikPdaScanBridge.applyScannerBroadcast(broadcast)
                 if (broadcast.action == HikPdaScanBridge.ACTION_CAMERA_INIT_COMPLETE) {
+                    HikPdaScanBridge.useResultOnlyAudio(appContext)
                     if (shouldKeepScanning) {
                         Log.i(tag, "Camera init complete; re-triggering continuous FDA scan.")
                         runCatching {

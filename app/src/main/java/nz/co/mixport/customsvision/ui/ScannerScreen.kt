@@ -106,7 +106,7 @@ fun ScannerScreen(
     var pdaStatusMessage by remember { mutableStateOf<String?>(null) }
     var lastPdaBarcode by remember { mutableStateOf<String?>(null) }
     var lastPdaCodeType by remember { mutableStateOf<String?>(null) }
-    var lastPlayedFeedbackNonce by remember { mutableLongStateOf(0L) }
+    var lastPlayedFeedbackNonce by remember { mutableLongStateOf(scanner.feedbackNonce) }
     var manualTriggerJob by remember { mutableStateOf<Job?>(null) }
     var activeHardwareKey by remember { mutableStateOf<Int?>(null) }
 
@@ -311,10 +311,14 @@ fun ScannerScreen(
     }
 
     LaunchedEffect(scanner.feedbackNonce, scanner.isSoundEnabled) {
-        if (!scanner.isSoundEnabled ||
-            scanner.feedbackNonce == 0L ||
+        if (scanner.feedbackNonce == 0L ||
             scanner.feedbackNonce == lastPlayedFeedbackNonce
         ) {
+            return@LaunchedEffect
+        }
+
+        lastPlayedFeedbackNonce = scanner.feedbackNonce
+        if (!scanner.isSoundEnabled) {
             return@LaunchedEffect
         }
 
@@ -327,7 +331,6 @@ fun ScannerScreen(
                 mpiStatus = lookup?.mpiStatus ?: record?.mpiStatus,
             ),
         )
-        lastPlayedFeedbackNonce = scanner.feedbackNonce
     }
 
     LazyColumn(

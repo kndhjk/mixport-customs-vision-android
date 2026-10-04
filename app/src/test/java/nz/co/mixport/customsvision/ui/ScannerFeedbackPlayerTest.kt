@@ -32,4 +32,28 @@ class ScannerFeedbackPlayerTest {
             scannerFeedbackSound(ScannerMatchStatus.MISMATCH, null, null),
         )
     }
+
+    @Test
+    fun `missing clearance never plays a release sound`() {
+        assertEquals(
+            ScannerFeedbackSound.HOLD,
+            scannerFeedbackSound(ScannerMatchStatus.MATCHED, "clear", null),
+        )
+        assertEquals(
+            ScannerFeedbackSound.HOLD,
+            scannerFeedbackSound(ScannerMatchStatus.MATCHED, "", "clear"),
+        )
+        assertEquals(
+            ScannerFeedbackSound.FAILED,
+            scannerFeedbackSound(ScannerMatchStatus.MATCHED, "hold", "failed"),
+        )
+    }
+
+    @Test
+    fun `waiting for a new scan cannot replay previous clear sound`() {
+        assertEquals(
+            ScannerFeedbackSound.NONE,
+            scannerFeedbackSound(ScannerMatchStatus.WAITING, "clear", "clear"),
+        )
+    }
 }

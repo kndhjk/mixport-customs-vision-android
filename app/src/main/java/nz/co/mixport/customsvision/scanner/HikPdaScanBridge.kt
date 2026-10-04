@@ -91,6 +91,7 @@ object HikPdaScanBridge {
     private const val ACTION_SCAN_SHOCK = "com.service.scanner.shock"
     private const val ACTION_SCAN_VIBRATOR_DURATION = "com.service.scanner.shock.duration"
     private const val ACTION_SCAN_VOICE = "com.service.scanner.voice"
+    private const val ACTION_SCAN_TONE_TYPE = "com.service.scanner.waringtone.type"
     private const val ACTION_USER_APPLICATION_ID = "com.user.applicationid.set"
 
     const val ACTION_DEFAULT_SCAN_CONFIG = "com.service.scanner.default.values.scan.config"
@@ -136,6 +137,7 @@ object HikPdaScanBridge {
     private const val EXTRA_SCAN_SHOCK = "scanShock"
     private const val EXTRA_VIBRATOR_DURATION = "vibratorDuration"
     private const val EXTRA_SCAN_VOICE = "scanVoice"
+    private const val EXTRA_SCAN_TONE_TYPE = "toneType"
     private const val EXTRA_CUSTOM_START_ACTION = "customStartReadCodeBroadcast"
     private const val EXTRA_CUSTOM_STOP_ACTION = "customStopReadCodeBroadcast"
     private const val EXTRA_DEFAULT_VALUE = "default_value"
@@ -205,6 +207,7 @@ object HikPdaScanBridge {
     fun prepareRuntime(context: Context) {
         startService(context)
         setApplicationIdentity(context)
+        useResultOnlyAudio(context)
         queryStatus(context)
     }
 
@@ -249,7 +252,7 @@ object HikPdaScanBridge {
         setPreciseMode(context, enabled = true)
         setComplicatedCode(context, enabled = true)
         setShock(context, enabled = true, durationMs = DEFAULT_VIBRATOR_DURATION_MS)
-        setVoice(context, true)
+        useResultOnlyAudio(context)
         setWorkingDistance(context, PdaWorkingDistance.DEVICE_DEFAULT)
         setFrontFillLight(context, true)
         setAimerLight(context, true)
@@ -622,6 +625,17 @@ object HikPdaScanBridge {
             action = ACTION_SCAN_VOICE,
             component = controlComponent,
             extras = listOf(EXTRA_SCAN_VOICE to enabled),
+        )
+    }
+
+    fun useResultOnlyAudio(context: Context) {
+        // This firmware plays decode/repeat tones using toneType, independently of scanVoice.
+        setVoice(context, enabled = false)
+        send(
+            context = context,
+            action = ACTION_SCAN_TONE_TYPE,
+            component = controlComponent,
+            extras = listOf(EXTRA_SCAN_TONE_TYPE to 0),
         )
     }
 
