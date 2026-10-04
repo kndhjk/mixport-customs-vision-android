@@ -1,6 +1,7 @@
 ﻿package nz.co.mixport.customsvision.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -50,6 +51,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,6 +73,7 @@ import androidx.lifecycle.Observer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import nz.co.mixport.customsvision.R
 import nz.co.mixport.customsvision.camera.InspectionCameraController
 import nz.co.mixport.customsvision.camera.LiveDetectionFrame
@@ -82,6 +85,7 @@ import nz.co.mixport.customsvision.data.InspectionSessionRecord
 import nz.co.mixport.customsvision.data.PalletDetail
 import nz.co.mixport.customsvision.domain.SessionPhase
 import nz.co.mixport.customsvision.domain.WorkflowEvent
+import nz.co.mixport.customsvision.update.AppUpdateManager
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -95,6 +99,7 @@ private val BrandGradientStart = Color(0xFFF45D22)
 private val BrandGradientEnd = Color(0xFFD94D1A)
 private val BrandTint = Color(0xFFFFF3EB)
 private const val ScannerAutoUploadRetryIntervalMs = 5_000L
+private const val AppUpdatePollIntervalMs = 15 * 60 * 1_000L
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -103,6 +108,9 @@ fun CustomsApp(viewModel: AppViewModel) {
     val context = LocalContext.current
     val language = uiState.appLanguage
     val lifecycleOwner = LocalLifecycleOwner.current
+    val updateManager = remember(context) { AppUpdateManager(context) }
+    val updateState by updateManager.state.collectAsStateWithLifecycle()
+    val updateScope = rememberCoroutineScope()
     val scannerScreenActive = uiState.selectedDestination == AppDestination.SCANNER
     val shouldMaintainScannerUploadLoop = scannerScreenActive || uiState.scanner.sync.pendingUploadCount > 0
 
@@ -165,45 +173,74 @@ fun CustomsApp(viewModel: AppViewModel) {
         }
     }
 
+    LaunchedEffect(lifecycleOwner, updateManager) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                updateManager.checkForUpdate()
+                delay(AppUpdatePollIntervalMs)
+            }
+        }
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
-                title = {
-                    Column {
-                        Text(language.pick("Mixport Customs Vision", "Mixport 智能海关"))
-                        Text(
-                            text = language.pick(
-                                "Cargo tracking, pallet counting, evidence capture, and scanner workflows",
-                                "货物追踪、托盘计数、证据留存与扫码作业",
+            Column {
+                TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
+                    title = {
+                        Column {
+                            Text(language.pick("Mixport Customs Vision", "Mixport 智能海关"))
+                            Text(
+                                text = language.pick(
+                                    "Cargo tracking, pallet counting, evidence capture, and scanner workflows",
+                                    "货物追踪、托盘计数、证据留存与扫码作业",
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.82f),
+                            )
+                        }
+                    },
+                    actions = {
+                        Button(
+                            onClick = viewModel::toggleLanguage,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.14f),
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
                             ),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.82f),
-                        )
-                    }
-                },
-                actions = {
-                    Button(
-                        onClick = viewModel::toggleLanguage,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.14f),
-                            contentColor = MaterialTheme.colorScheme.onPrimary,
-                        ),
-                    ) {
-                        Text(
-                            if (language == nz.co.mixport.customsvision.data.AppLanguage.ENGLISH) {
-                                "中文"
-                            } else {
-                                "EN"
-                            },
-                        )
-                    }
-                },
-            )
+                        ) {
+                            Text(
+                                if (language == nz.co.mixport.customsvision.data.AppLanguage.ENGLISH) {
+                                    "中文"
+                                } else {
+                                    "EN"
+                                },
+                            )
+                        }
+                    },
+                )
+                AppUpdateBanner(
+                    language = language,
+                    state = updateState,
+                    onInstall = {
+                        (context as? Activity)?.let { activity ->
+                            updateScope.launch {
+                                updateManager.downloadAndInstall(activity)
+                            }
+                        }
+                    },
+                    onRetry = {
+                        (context as? Activity)?.let { activity ->
+                            updateScope.launch {
+                                updateManager.downloadAndInstall(activity)
+                            }
+                        }
+                    },
+                )
+            }
         },
         bottomBar = {
             NavigationBar(

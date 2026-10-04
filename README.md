@@ -15,7 +15,7 @@ This repo is for the first pilot company, using the same company server stack la
 
 - GitHub repo: [kndhjk/mixport-customs-vision-android](https://github.com/kndhjk/mixport-customs-vision-android)
 - Latest release page: [Releases](https://github.com/kndhjk/mixport-customs-vision-android/releases/latest)
-- Release artifacts: universal `app-public-debug.apk` plus a hardened `arm64-v8a` `app-public-release.apk`
+- Release artifacts: one signed, hardened `arm64-v8a` APK plus `mixport-update-manifest.json`
 
 ## What the app does
 
@@ -51,7 +51,7 @@ Live page snapshot on Hikrobot PDA:
 - keeps the result card green only when both `NZCS` and `MPI` are `clear`
 - turns the result card red immediately when either `NZCS` or `MPI` is `failed`
 - turns the result card yellow for every remaining matched `hold` combination, including `clear + hold` and `hold + hold`
-- uses different tones for matched, mismatch, and empty/error results
+- uses deliberately different audio feedback: a bright chime for fully clear cargo, a short warning beep for hold, and a low error alert for failed / unmatched scans
 - keeps worker-facing scanner UI focused on scan result, counts, and history without exposing sync-control or provisioning controls
 - keeps barcode cleanup and clearance-state normalization on a tiny C/JNI bridge with Kotlin fallback, while the heavier package-size win comes from `arm64-v8a`-only release packaging
 
@@ -111,6 +111,8 @@ That keeps the pilot safer and makes multi-company rollout possible later throug
 - provisioning requests are validated for HTTPS, approved host suffixes, and device ID format before anything is written locally
 - the worker-facing app UI does not expose sync credentials
 - internal server wiring and dashboard-side auth details are intentionally omitted from the public docs
+- release APKs are accepted only when package name, version code, SHA-256 checksum, and signing certificate all match the signed update manifest and the installed app identity
+- tagged releases fail closed when the GitHub release-signing secrets are missing; unsigned APKs are never attached to a public release
 
 ## Hardware notes
 
@@ -160,7 +162,7 @@ Two distribution variants now exist:
 .\gradlew.bat :app:assembleFieldRelease
 ```
 
-Release builds now target `arm64-v8a` only so the published secure APK does not carry unused x86/x86_64/armeabi-v7a ML Kit native payloads. When no release keystore is configured, Gradle emits unsigned release APKs for controlled signing. GitHub release automation only publishes the hardened `public` artifacts, while the `field` artifacts stay local / internal.
+Release builds target `arm64-v8a` only so the published secure APK does not carry unused x86/x86_64/armeabi-v7a ML Kit native payloads. Without a local release keystore Gradle can still emit an unsigned APK for controlled signing, but tagged GitHub releases require the configured stable signing identity and publish only the signed hardened `public` artifact. The `field` artifacts stay local / internal.
 
 To enable production signing locally or in GitHub Actions, provide these values through environment variables, Gradle properties, or an untracked `release-signing.local.properties` file:
 
@@ -192,7 +194,22 @@ C:\Users\zyzmc\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r .\app
 .\gradlew.bat :app:assembleFieldRelease
 ```
 
-GitHub Actions now runs the same public lint, unit-test, and public/field build path for pull requests to `main`, not just after merge. Only the hardened `public` APKs are attached to GitHub releases.
+GitHub Actions runs the same public lint, unit-test, and public/field build path for pull requests to `main`, not just after merge. A tagged build additionally verifies release signing, derives the APK checksum and signing-certificate fingerprint, and publishes the hardened `public` APK with a machine-readable update manifest.
+
+## Signed in-app updates
+
+- The app checks the repository's latest GitHub Release while it is in the foreground, with a 15-minute rate limit.
+- The update strip stays hidden when no newer release exists, so the normal worker workflow is unchanged.
+- A worker can download the update from the strip; the app then verifies the approved HTTPS host, package name, increasing version code, SHA-256 digest, manifest signer fingerprint, and compatibility with the currently installed signing identity.
+- Only after every check passes does the app open Android's system package installer. Android still requires the operator to confirm the installation and, on first use, allow this app as an install source.
+- The application ID and signing identity remain stable, so an in-place install keeps local SQLite history and Android Keystore-backed sync configuration.
+- A corrupted cached APK is deleted and downloaded again instead of repeatedly failing on the same file.
+
+Release signing values are GitHub Actions secrets. The keystore, passwords, private API endpoint, and sync token are not committed to this repository or written into the update manifest.
+
+## Scanner audio assets
+
+The clear and failed sounds are short, offline resources so scanning does not depend on network playback. Their source and license record is maintained in [`docs/licenses/AUDIO_ASSETS.md`](docs/licenses/AUDIO_ASSETS.md). Hold uses a short Android-generated warning beep to stay recognisably different from both terminal outcomes.
 
 ## Scanner sync workflow
 
@@ -253,7 +270,7 @@ The app stores the imported profile locally in encrypted form, refreshes its sta
 - `Public APKs still carried static sync credentials`: fixed by moving private sync configuration to runtime provisioning backed by Android Keystore instead of `BuildConfig`.
 - `Any app could previously push sync extras through the launcher activity`: fixed by moving provisioning into a dedicated non-exported admin activity with HTTPS + host-allowlist validation before local state is changed.
 - `Public release and company-device rollout previously shared the same attack surface`: fixed by splitting builds into hardened `public` and controlled `field` variants, while keeping the same package/data path for internal upgrades.
-- `Release builds were only debug-signed`: fixed by switching the public build to unsigned release output unless a real release keystore is provided.
+- `Release builds were unsigned or changed signing identity`: fixed by requiring a stable secret-backed signer for every tagged release and publishing a checksum / signer manifest consumed by the in-app updater.
 - `Universal release APKs stayed too large because every ABI shipped the same ML Kit native payload`: fixed by targeting `arm64-v8a` for release outputs and filtering app resources to English + Chinese only.
 - `Scanner result normalization should stay fast without pulling core security or sync logic into native code`: fixed by keeping only barcode and clearance-state normalization on a tiny C bridge, with Kotlin fallback preserving behavior when native loading is unavailable.
 
@@ -287,7 +304,7 @@ Reference docs:
 - pallet and cargo recognition are optimized for on-device runtime, but the final custom-trained model is not in the repo yet
 - the PDA scanner workflow depends on the vendor runtime and device firmware
 - no production secrets are stored in the repo
-- release builds remain pilot-oriented until a production keystore is provided, but they no longer fall back to debug signing
+- the first deployed signing identity must remain securely backed up; losing it prevents safe in-place upgrades on existing Android 11 field devices
 
 ## Project map
 

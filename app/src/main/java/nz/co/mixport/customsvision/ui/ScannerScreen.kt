@@ -1,7 +1,5 @@
 ﻿package nz.co.mixport.customsvision.ui
 
-import android.media.AudioManager
-import android.media.ToneGenerator
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -98,7 +96,7 @@ fun ScannerScreen(
     val latestRecord = scanner.history.firstOrNull()
     val context = androidx.compose.ui.platform.LocalContext.current
     val pdaScanController = remember(context) { HikPdaScanController(context) }
-    val toneGenerator = remember { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90) }
+    val feedbackPlayer = remember(context) { ScannerFeedbackPlayer(context.applicationContext) }
     val coroutineScope = rememberCoroutineScope()
     val currentLanguage by rememberUpdatedState(language)
     val currentOnScannerPdaDetected by rememberUpdatedState(onScannerPdaDetected)
@@ -297,9 +295,9 @@ fun ScannerScreen(
         }
     }
 
-    DisposableEffect(toneGenerator) {
+    DisposableEffect(feedbackPlayer) {
         onDispose {
-            toneGenerator.release()
+            feedbackPlayer.close()
         }
     }
 
@@ -311,12 +309,15 @@ fun ScannerScreen(
             return@LaunchedEffect
         }
 
-        when (scanner.lastResult) {
-            ScannerMatchStatus.MATCHED -> toneGenerator.startTone(ToneGenerator.TONE_PROP_ACK, 140)
-            ScannerMatchStatus.MISMATCH -> toneGenerator.startTone(ToneGenerator.TONE_PROP_NACK, 210)
-            ScannerMatchStatus.ERROR -> toneGenerator.startTone(ToneGenerator.TONE_CDMA_SOFT_ERROR_LITE, 220)
-            ScannerMatchStatus.WAITING -> Unit
-        }
+        val lookup = scanner.lastLookupResult
+        val record = scanner.history.firstOrNull()
+        feedbackPlayer.play(
+            scannerFeedbackSound(
+                matchStatus = scanner.lastResult,
+                nzcsStatus = lookup?.customersStatus ?: record?.customersStatus,
+                mpiStatus = lookup?.mpiStatus ?: record?.mpiStatus,
+            ),
+        )
         lastPlayedFeedbackNonce = scanner.feedbackNonce
     }
 

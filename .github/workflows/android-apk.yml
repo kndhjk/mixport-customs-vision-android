@@ -33,34 +33,100 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
+      - name: Prepare release signing
+        shell: bash
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${GITHUB_WORKSPACE}/.ci"
+          KEYSTORE_PATH="${GITHUB_WORKSPACE}/.ci/mixport-release.keystore"
+
+          if [[ -n "${RELEASE_KEYSTORE_BASE64}" ]]; then
+            printf '%s' "${RELEASE_KEYSTORE_BASE64}" | base64 --decode > "${KEYSTORE_PATH}"
+          fi
+
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            test -s "${KEYSTORE_PATH}"
+            test -n "${RELEASE_STORE_PASSWORD}"
+            test -n "${RELEASE_KEY_ALIAS}"
+            test -n "${RELEASE_KEY_PASSWORD}"
+          fi
+
+          if [[ -s "${KEYSTORE_PATH}" ]]; then
+            {
+              echo "ANDROID_RELEASE_STORE_FILE=${KEYSTORE_PATH}"
+              echo "ANDROID_RELEASE_STORE_PASSWORD=${RELEASE_STORE_PASSWORD}"
+              echo "ANDROID_RELEASE_KEY_ALIAS=${RELEASE_KEY_ALIAS}"
+              echo "ANDROID_RELEASE_KEY_PASSWORD=${RELEASE_KEY_PASSWORD}"
+            } >> "${GITHUB_ENV}"
+          fi
+
       - name: Lint, test, and build APKs
         run: ./gradlew lintPublicDebug testPublicDebugUnitTest assemblePublicDebug assemblePublicRelease assembleFieldDebug assembleFieldRelease
 
-      - name: Prepare artifacts
+      - name: Prepare artifacts and signed update manifest
         shell: bash
         run: |
           set -euo pipefail
-          VERSION_NAME="${GITHUB_REF_NAME}"
-          if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
-            VERSION_NAME="main-${GITHUB_RUN_NUMBER}"
-          fi
           mkdir -p dist
-          shopt -s nullglob
-          APKS=(app/build/outputs/apk/public/debug/*.apk app/build/outputs/apk/public/release/*.apk)
-          if [[ ${#APKS[@]} -eq 0 ]]; then
-            echo "No APK artifacts were produced."
-            exit 1
+
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            shopt -s nullglob
+            RELEASE_APKS=(app/build/outputs/apk/public/release/*.apk)
+            SIGNED_APKS=()
+            for apk in "${RELEASE_APKS[@]}"; do
+              if [[ "$(basename "${apk}")" != *unsigned* ]]; then
+                SIGNED_APKS+=("${apk}")
+              fi
+            done
+            if [[ ${#SIGNED_APKS[@]} -ne 1 ]]; then
+              echo "A tagged release requires exactly one signed public release APK."
+              exit 1
+            fi
+
+            ASSET_NAME="mixport-customs-vision-${GITHUB_REF_NAME}.apk"
+            cp "${SIGNED_APKS[0]}" "dist/${ASSET_NAME}"
+
+            METADATA="app/build/outputs/apk/public/release/output-metadata.json"
+            VERSION_CODE="$(jq -r '.elements[0].versionCode' "${METADATA}")"
+            VERSION_NAME="$(jq -r '.elements[0].versionName' "${METADATA}")"
+            APK_SHA256="$(sha256sum "dist/${ASSET_NAME}" | awk '{print $1}')"
+            BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+            SIGNER_SHA256="$("${BUILD_TOOLS}/apksigner" verify --print-certs "dist/${ASSET_NAME}" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+            test "${#SIGNER_SHA256}" -eq 64
+
+            jq -n \
+              --arg package_name "nz.co.mixport.customsvision" \
+              --arg version_name "${VERSION_NAME}" \
+              --argjson version_code "${VERSION_CODE}" \
+              --arg apk_download_url "https://github.com/kndhjk/mixport-customs-vision-android/releases/download/${GITHUB_REF_NAME}/${ASSET_NAME}" \
+              --arg sha256 "${APK_SHA256}" \
+              --arg signer_sha256 "${SIGNER_SHA256}" \
+              '{schema_version: 1, package_name: $package_name, version_code: $version_code, version_name: $version_name, apk_download_url: $apk_download_url, sha256: $sha256, signer_sha256: $signer_sha256}' \
+              > dist/mixport-update-manifest.json
+          else
+            VERSION_NAME="main-${GITHUB_RUN_NUMBER}"
+            shopt -s nullglob
+            APKS=(app/build/outputs/apk/public/debug/*.apk app/build/outputs/apk/public/release/*.apk)
+            if [[ ${#APKS[@]} -eq 0 ]]; then
+              echo "No APK artifacts were produced."
+              exit 1
+            fi
+            for apk in "${APKS[@]}"; do
+              base_name="$(basename "${apk}")"
+              cp "${apk}" "dist/${base_name%.apk}-${VERSION_NAME}.apk"
+            done
           fi
-          for apk in "${APKS[@]}"; do
-            base_name="$(basename "${apk}")"
-            cp "${apk}" "dist/${base_name%.apk}-${VERSION_NAME}.apk"
-          done
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
           name: mixport-customs-vision-apks
-          path: dist/*.apk
+          path: dist/*
 
       - name: Submit dependency graph
         if: github.event_name == 'push'
@@ -71,13 +137,14 @@ jobs:
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.apk
+          files: |
+            dist/mixport-customs-vision-*.apk
+            dist/mixport-update-manifest.json
           generate_release_notes: true
           body: |
-            Pilot Android APKs for Mixport Customs Vision.
+            Signed production update for Mixport Customs Vision.
 
-            Notes:
-            - Only the hardened `public` APK variants are attached to GitHub releases.
-            - `public-debug.apk` remains the fallback installable artifact for lab and validation.
-            - `public-release.apk` is an `arm64-v8a` release build signed only when release-keystore secrets are configured; otherwise GitHub produces an unsigned release artifact for controlled signing.
-            - The `field` variants continue to build in CI for regression coverage, but they are not published as public GitHub artifacts.
+            - The APK keeps the existing application ID and signing identity so Android can preserve local databases and encrypted sync configuration during an in-place update.
+            - The app validates the package, version, SHA-256 checksum, and signing certificate before opening Android's system installer.
+            - Android still requires an operator confirmation before installation; silent installation is not requested.
+            - Only the hardened `public` flavor is published. The internal `field` flavor remains a CI regression build and is not exposed as a release asset.

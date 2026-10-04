@@ -89,8 +89,8 @@ android {
         applicationId = "nz.co.mixport.customsvision"
         minSdk = 26
         targetSdk = 34
-        versionCode = 18
-        versionName = "0.7.3"
+        versionCode = 19
+        versionName = "0.8.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         resourceConfigurations += listOf("en", "zh")
@@ -165,6 +165,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 
