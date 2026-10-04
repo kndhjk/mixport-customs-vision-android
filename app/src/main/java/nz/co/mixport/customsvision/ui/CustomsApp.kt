@@ -75,6 +75,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import nz.co.mixport.customsvision.R
+import nz.co.mixport.customsvision.update.AppUpdateCheckResult
 import nz.co.mixport.customsvision.camera.InspectionCameraController
 import nz.co.mixport.customsvision.camera.LiveDetectionFrame
 import nz.co.mixport.customsvision.camera.LiveRecognition
@@ -111,6 +112,9 @@ fun CustomsApp(viewModel: AppViewModel) {
     val updateManager = remember(context) { AppUpdateManager(context) }
     val updateState by updateManager.state.collectAsStateWithLifecycle()
     val updateScope = rememberCoroutineScope()
+    var showVersionDialog by remember { mutableStateOf(false) }
+    var manualCheckRunning by remember { mutableStateOf(false) }
+    var manualCheckResult by remember { mutableStateOf<AppUpdateCheckResult?>(null) }
     val scannerScreenActive = uiState.selectedDestination == AppDestination.SCANNER
     val shouldMaintainScannerUploadLoop = scannerScreenActive || uiState.scanner.sync.pendingUploadCount > 0
 
@@ -205,6 +209,25 @@ fun CustomsApp(viewModel: AppViewModel) {
                         }
                     },
                     actions = {
+                        Button(
+                            onClick = {
+                                showVersionDialog = true
+                                if (!manualCheckRunning) {
+                                    manualCheckResult = null
+                                    manualCheckRunning = true
+                                    updateScope.launch {
+                                        manualCheckResult = updateManager.checkForUpdate(force = true)
+                                        manualCheckRunning = false
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.14f),
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                            ),
+                        ) {
+                            Text(language.pick("Updates", "检查更新"))
+                        }
                         Button(
                             onClick = viewModel::toggleLanguage,
                             colors = ButtonDefaults.buttonColors(
@@ -326,6 +349,29 @@ fun CustomsApp(viewModel: AppViewModel) {
                 sessions = uiState.history,
             )
         }
+    }
+    if (showVersionDialog) {
+        AppVersionDialog(
+            language = language,
+            hasCompanyConnection = uiState.scanner.sync.isProvisioned,
+            isChecking = manualCheckRunning,
+            checkResult = manualCheckResult,
+            onCheck = {
+                manualCheckResult = null
+                manualCheckRunning = true
+                updateScope.launch {
+                    manualCheckResult = updateManager.checkForUpdate(force = true)
+                    manualCheckRunning = false
+                }
+            },
+            onUpdate = {
+                showVersionDialog = false
+                (context as? Activity)?.let { activity ->
+                    updateScope.launch { updateManager.downloadAndInstall(activity) }
+                }
+            },
+            onDismiss = { showVersionDialog = false },
+        )
     }
 }
 

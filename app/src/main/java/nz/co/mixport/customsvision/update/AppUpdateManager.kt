@@ -59,6 +59,13 @@ internal sealed interface AppUpdateState {
     ) : AppUpdateState
 }
 
+internal sealed interface AppUpdateCheckResult {
+    data object UpToDate : AppUpdateCheckResult
+    data class Available(val release: AppUpdateRelease) : AppUpdateCheckResult
+    data object Failed : AppUpdateCheckResult
+    data object Skipped : AppUpdateCheckResult
+}
+
 internal data class UpdateManifest(
     @SerializedName("schema_version") val schemaVersion: Int,
     @SerializedName("package_name") val packageName: String,
@@ -120,19 +127,19 @@ internal class AppUpdateManager(context: Context) {
     private val _state = MutableStateFlow<AppUpdateState>(loadCachedState())
     val state: StateFlow<AppUpdateState> = _state.asStateFlow()
 
-    suspend fun checkForUpdate(force: Boolean = false) = operationMutex.withLock {
+    suspend fun checkForUpdate(force: Boolean = false): AppUpdateCheckResult = operationMutex.withLock {
         val currentState = _state.value
         if (currentState is AppUpdateState.Downloading) {
-            return@withLock
+            return@withLock AppUpdateCheckResult.Skipped
         }
         val now = System.currentTimeMillis()
         val lastCheckAt = preferences.getLong(KEY_LAST_CHECK_AT, 0L)
         if (!force && now - lastCheckAt < UPDATE_CHECK_INTERVAL_MS) {
-            return@withLock
+            return@withLock AppUpdateCheckResult.Skipped
         }
 
         _state.value = AppUpdateState.Checking
-        runCatching {
+        return@withLock runCatching {
             withContext(Dispatchers.IO) {
                 fetchLatestUpdate()
             }
@@ -156,7 +163,13 @@ internal class AppUpdateManager(context: Context) {
                 is AppUpdateState.PermissionRequired -> currentState
                 else -> AppUpdateState.Idle
             }
-        }
+        }.fold(
+            onSuccess = { release ->
+                if (release == null) AppUpdateCheckResult.UpToDate
+                else AppUpdateCheckResult.Available(release)
+            },
+            onFailure = { AppUpdateCheckResult.Failed },
+        )
     }
 
     suspend fun downloadAndInstall(activity: Activity) = operationMutex.withLock {

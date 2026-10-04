@@ -198,12 +198,14 @@ GitHub Actions runs the same public lint, unit-test, and public/field build path
 
 ## Signed in-app updates
 
+- Tap **Updates / 检查更新** in the top bar to force a GitHub version check. The version panel distinguishes an available release, the latest installed version, and a failed network check; automatic background checks remain enabled.
 - The app checks the repository's latest GitHub Release while it is in the foreground, with a 15-minute rate limit.
 - The update strip stays hidden when no newer release exists, so the normal worker workflow is unchanged.
 - A worker can download the update from the strip; the app then verifies the approved HTTPS host, package name, increasing version code, SHA-256 digest, manifest signer fingerprint, and compatibility with the currently installed signing identity.
 - Only after every check passes does the app open Android's system package installer. Android still requires the operator to confirm the installation and, on first use, allow this app as an install source.
 - The application ID and signing identity remain stable, so an in-place install keeps local SQLite history and Android Keystore-backed sync configuration.
 - A corrupted cached APK is deleted and downloaded again instead of repeatedly failing on the same file.
+- Public GitHub APKs contain no company endpoint or bearer token. On an already provisioned PDA, installing the public APK **over** the field build keeps the same application ID, signing identity, app data, and Android Keystore entry; the existing encrypted profile is loaded automatically on next launch. A fresh install, uninstall, or data clear does not recover that profile and requires authorised provisioning again. No token is embedded in the download or copied into update metadata.
 
 Release signing values are GitHub Actions secrets. The keystore, passwords, private API endpoint, and sync token are not committed to this repository or written into the update manifest.
 
