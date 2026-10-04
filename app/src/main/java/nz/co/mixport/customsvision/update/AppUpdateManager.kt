@@ -423,11 +423,11 @@ internal class AppUpdateManager(context: Context) {
     }
 
     private data class GithubRelease(
-        val assets: List<GithubReleaseAsset> = emptyList(),
+        @SerializedName("assets") val assets: List<GithubReleaseAsset> = emptyList(),
     )
 
     private data class GithubReleaseAsset(
-        val name: String = "",
+        @SerializedName("name") val name: String = "",
         @SerializedName("browser_download_url") val downloadUrl: String = "",
     )
 

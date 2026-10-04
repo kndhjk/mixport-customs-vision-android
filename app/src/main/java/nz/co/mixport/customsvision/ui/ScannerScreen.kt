@@ -100,6 +100,7 @@ fun ScannerScreen(
     val coroutineScope = rememberCoroutineScope()
     val currentLanguage by rememberUpdatedState(language)
     val currentOnScannerPdaDetected by rememberUpdatedState(onScannerPdaDetected)
+    val currentScannerIsProcessing by rememberUpdatedState(scanner.isProcessing)
     var isPdaServiceInstalled by remember { mutableStateOf(pdaScanController.isPdaServiceInstalled()) }
     var isPdaBridgeReady by remember { mutableStateOf(false) }
     var pdaStatusMessage by remember { mutableStateOf<String?>(null) }
@@ -110,7 +111,7 @@ fun ScannerScreen(
     var activeHardwareKey by remember { mutableStateOf<Int?>(null) }
 
     fun resetScannerResultForNextAttempt() {
-        if (scanner.isProcessing) {
+        if (currentScannerIsProcessing) {
             return
         }
         lastPdaBarcode = null
@@ -140,7 +141,12 @@ fun ScannerScreen(
     }
 
     fun triggerManualScan(showHint: Boolean) {
-        resetScannerResultForNextAttempt()
+        if (currentScannerIsProcessing) {
+            return
+        }
+        if (showHint) {
+            resetScannerResultForNextAttempt()
+        }
         pdaScanController.triggerSingleScan()
             .onSuccess {
                 isPdaBridgeReady = true
@@ -209,6 +215,9 @@ fun ScannerScreen(
                 )
             },
             onBarcodeDetected = { barcode, codeType ->
+                if (currentScannerIsProcessing) {
+                    return@bind
+                }
                 val normalized = barcode.trim()
                 lastPdaBarcode = normalized
                 lastPdaCodeType = codeType.takeIf(String::isNotBlank)
@@ -380,8 +389,8 @@ private fun ScannerResultCard(
     isPdaBridgeReady: Boolean,
 ) {
     val isWaitingState = !scanner.isProcessing && scanner.lastResult == ScannerMatchStatus.WAITING
-    val visibleRecord = latestRecord.takeUnless { isWaitingState }
-    val liveLookup = scanner.lastLookupResult.takeUnless { isWaitingState }
+    val visibleRecord = latestRecord.takeUnless { isWaitingState || scanner.isProcessing }
+    val liveLookup = scanner.lastLookupResult.takeUnless { isWaitingState || scanner.isProcessing }
     val nzcsStatus = liveLookup?.customersStatus ?: visibleRecord?.customersStatus
     val mpiStatus = liveLookup?.mpiStatus ?: visibleRecord?.mpiStatus
     val clearanceOverallStatus = if (scanner.lastResult == ScannerMatchStatus.MATCHED) {

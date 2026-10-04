@@ -618,15 +618,20 @@ internal class ScannerWorkflowController(
     private suspend fun refreshLatestVisibleScannerResult(settings: ScannerSyncSettings) {
         val scannerSnapshot = state.value.scanner
         val latestRecord = scannerSnapshot.history.firstOrNull() ?: return
+        if (!isCurrentScannerResult(scannerSnapshot, latestRecord)) {
+            return
+        }
         val latestBarcode = scannerSnapshot.lastProcessedBarcode
             ?.takeIf(String::isNotBlank)
-            ?: latestRecord.scannedBarcode.takeIf(String::isNotBlank)
             ?: return
 
         val lookupAttempt = runCatching {
             repository.lookupBarcode(latestBarcode, settings)
         }
         if (lookupAttempt.isFailure) {
+            return
+        }
+        if (!isCurrentScannerResult(state.value.scanner, latestRecord)) {
             return
         }
         val refreshedLookup = lookupAttempt.getOrNull()
@@ -636,11 +641,11 @@ internal class ScannerWorkflowController(
             lookupResult = refreshedLookup,
             scannedAt = latestRecord.scannedAt,
         ).copy(localLogId = latestRecord.localLogId)
-        val updatedHistory = listOf(refreshedRecord) + scannerSnapshot.history.drop(1)
-        preferencesRepository.setScannerHistory(updatedHistory)
-
         state.update {
-            val isWaitingState = !it.scanner.isProcessing && it.scanner.lastResult == ScannerMatchStatus.WAITING
+            if (!isCurrentScannerResult(it.scanner, latestRecord)) {
+                return@update it
+            }
+            val updatedHistory = listOf(refreshedRecord) + it.scanner.history.drop(1)
             val refreshedSelectedRecord = it.scanner.selectedHistoryRecord?.takeIf { selected ->
                 selected.localLogId == refreshedRecord.localLogId ||
                     (selected.scannedBarcode == refreshedRecord.scannedBarcode &&
@@ -657,18 +662,18 @@ internal class ScannerWorkflowController(
             it.copy(
                 scanner = it.scanner.copy(
                     history = updatedHistory,
-                    lastResult = if (isWaitingState) it.scanner.lastResult else refreshedRecord.matchStatus,
-                    statusMessage = if (isWaitingState) {
-                        it.scanner.statusMessage
-                    } else {
-                        scannerMessageFor(refreshedRecord, it.appLanguage)
-                    },
+                    lastResult = refreshedRecord.matchStatus,
+                    statusMessage = scannerMessageFor(refreshedRecord, it.appLanguage),
                     lastLookupResult = refreshedLookup,
                     lastProcessedBarcode = refreshedRecord.scannedBarcode,
                     selectedHistoryRecord = refreshedSelectedRecord ?: it.scanner.selectedHistoryRecord,
                     selectedHistoryDetail = refreshedSelectedDetail ?: it.scanner.selectedHistoryDetail,
                 ),
             )
+        }
+        val currentScanner = state.value.scanner
+        if (isCurrentScannerResult(currentScanner, refreshedRecord)) {
+            preferencesRepository.setScannerHistory(currentScanner.history)
         }
     }
 

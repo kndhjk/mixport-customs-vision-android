@@ -211,6 +211,8 @@ Release signing values are GitHub Actions secrets. The keystore, passwords, priv
 
 The clear and failed sounds are short, offline resources so scanning does not depend on network playback. Their source and license record is maintained in [`docs/licenses/AUDIO_ASSETS.md`](docs/licenses/AUDIO_ASSETS.md). Hold uses a short Android-generated warning beep to stay recognisably different from both terminal outcomes.
 
+The scanner result is tied to the exact scan event (barcode, timestamp, and local log ID). A late sync or upload lookup cannot replace a newer result, and holding the PDA scan key no longer resets the result every repeat interval. While a scan is being verified, the result card hides the previous cargo's clearance details instead of briefly showing them as the new result. The release shrinker explicitly retains updater JSON models so GitHub update checks also work in minified APKs.
+
 ## Scanner sync workflow
 
 1. Open the `Scanner` page.
