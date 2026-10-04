@@ -96,7 +96,7 @@ jobs:
             VERSION_NAME="$(jq -r '.elements[0].versionName' "${METADATA}")"
             APK_SHA256="$(sha256sum "dist/${ASSET_NAME}" | awk '{print $1}')"
             BUILD_TOOLS="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-            SIGNER_SHA256="$("${BUILD_TOOLS}/apksigner" verify --print-certs "dist/${ASSET_NAME}" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+            SIGNER_SHA256="$("${BUILD_TOOLS}/apksigner" verify --print-certs "dist/${ASSET_NAME}" | sed -n 's/^.*certificate SHA-256 digest: //p' | head -n 1 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
             test "${#SIGNER_SHA256}" -eq 64
 
             jq -n \
