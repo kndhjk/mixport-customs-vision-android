@@ -16,6 +16,7 @@ This repo is for the first pilot company, using the same company server stack la
 - GitHub repo: [kndhjk/mixport-customs-vision-android](https://github.com/kndhjk/mixport-customs-vision-android)
 - Latest release page: [Releases](https://github.com/kndhjk/mixport-customs-vision-android/releases/latest)
 - Release artifacts: one signed, hardened `arm64-v8a` APK plus `mixport-update-manifest.json`
+- Launcher branding uses the [official Mixport website icon](https://www.mixport.co.nz/assets/images/android-chrome-512x512.png), with adaptive-icon safe padding. Existing app-created home-screen shortcuts refresh their icon on the first launch after the branding update.
 
 ## What the app does
 

@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
-    android:gravity="center"
-    android:src="@drawable/ic_launcher_foreground_asset" />
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="21%"
+    android:insetTop="21%"
+    android:insetRight="21%"
+    android:insetBottom="21%">
+    <bitmap
+        android:gravity="fill"
+        android:filter="true"
+        android:src="@drawable/ic_launcher_foreground_asset" />
+</inset>

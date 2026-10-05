@@ -97,6 +97,11 @@ class MainActivity : ComponentActivity() {
     private fun maybePinAppToHomeScreen() {
         val preferences = getSharedPreferences(HOME_SHORTCUT_PREFS, Context.MODE_PRIVATE)
         if (preferences.getBoolean(KEY_HOME_SHORTCUT_REQUESTED, false)) {
+            if (preferences.getInt(KEY_HOME_SHORTCUT_ICON_REVISION, 0) < HOME_SHORTCUT_ICON_REVISION &&
+                refreshPinnedHomeShortcutIcon()
+            ) {
+                preferences.edit().putInt(KEY_HOME_SHORTCUT_ICON_REVISION, HOME_SHORTCUT_ICON_REVISION).apply()
+            }
             return
         }
 
@@ -115,7 +120,31 @@ class MainActivity : ComponentActivity() {
             else -> sendLegacyInstallShortcutBroadcast(launchIntent)
         }
         if (requested) {
-            preferences.edit().putBoolean(KEY_HOME_SHORTCUT_REQUESTED, true).apply()
+            preferences.edit()
+                .putBoolean(KEY_HOME_SHORTCUT_REQUESTED, true)
+                .putInt(KEY_HOME_SHORTCUT_ICON_REVISION, HOME_SHORTCUT_ICON_REVISION)
+                .apply()
+        }
+    }
+
+    private fun refreshPinnedHomeShortcutIcon(): Boolean {
+        return runCatching {
+            val manager = getSystemService(ShortcutManager::class.java) ?: return@runCatching false
+            if (manager.pinnedShortcuts.none { it.id == HOME_SHORTCUT_ID }) {
+                return@runCatching true
+            }
+            manager.updateShortcuts(
+                listOf(
+                    ShortcutInfo.Builder(this, HOME_SHORTCUT_ID)
+                        .setShortLabel(getString(R.string.app_name))
+                        .setLongLabel(getString(R.string.app_name))
+                        .setIcon(Icon.createWithResource(this, R.mipmap.ic_launcher))
+                        .build(),
+                ),
+            )
+        }.getOrElse { throwable ->
+            Log.w(STARTUP_TAG, "Unable to refresh pinned launcher icon", throwable)
+            false
         }
     }
 
@@ -235,6 +264,8 @@ private fun MainActivityContent(app: CustomsApplication) {
 private const val STARTUP_TAG = "MixportStartup"
 private const val HOME_SHORTCUT_PREFS = "mixport_home_shortcut"
 private const val KEY_HOME_SHORTCUT_REQUESTED = "home_shortcut_requested"
+private const val KEY_HOME_SHORTCUT_ICON_REVISION = "home_shortcut_icon_revision"
+private const val HOME_SHORTCUT_ICON_REVISION = 1
 private const val HOME_SHORTCUT_ID = "mixport_customs_home"
 
 @Composable
